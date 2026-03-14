@@ -197,6 +197,11 @@ public final class KokoroTtsManager {
         customLexicon
     }
 
+    /// Converts a word to its phoneme representation using G2P.
+    public func phonemize(word: String) async throws -> [String]? {
+        try await G2PModel.shared.phonemize(word: word)
+    }
+
     private func resolveVoice(_ requested: String?, speakerId: Int) -> String {
         guard let requested = requested?.trimmingCharacters(in: .whitespacesAndNewlines), !requested.isEmpty else {
             return voiceName(for: speakerId)
