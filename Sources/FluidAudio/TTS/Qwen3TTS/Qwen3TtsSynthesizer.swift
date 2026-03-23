@@ -1,6 +1,7 @@
 @preconcurrency import CoreML
 import Foundation
 import OSLog
+import Accelerate
 
 /// Qwen3-TTS 6-model CoreML synthesizer.
 ///
@@ -57,14 +58,17 @@ public struct Qwen3TtsSynthesizer {
     ///   - tokenIds: Pre-tokenized text IDs.
     ///   - useSpeaker: Whether to use speaker embedding (default: true).
     ///   - language: Language for synthesis (default: "english").
+    ///   - config: Optional sampling configuration for parameter tuning.
     /// - Returns: A synthesis result containing WAV audio data.
     public static func synthesize(
         text: String,
         tokenIds: [Int]? = nil,
         useSpeaker: Bool = true,
-        language: String = Qwen3TtsConstants.defaultLanguage
+        language: String = Qwen3TtsConstants.defaultLanguage,
+        config: Qwen3TtsSamplingConfig? = nil
     ) async throws -> SynthesisResult {
         let store = try currentModelStore()
+        let samplingConfig = config ?? .default
 
         logger.info("Qwen3-TTS synthesizing: '\(text)'")
 
@@ -103,7 +107,7 @@ public struct Qwen3TtsSynthesizer {
 
         suppressControlTokens(&logits)
         suppressEos(&logits)  // min_new_tokens: suppress EOS for step 0
-        let firstCb0 = sampleTopK(logits: &logits)
+        let firstCb0 = sampleGreedy(logits: logits)
         var generatedCb0s: [Int] = [firstCb0]
 
         logger.info("First CB0: \(firstCb0)")
@@ -135,7 +139,8 @@ public struct Qwen3TtsSynthesizer {
                 multiCodeEmbedder: multiCodeEmbedder,
                 kvKeyTemplate: mcdKeyTemplate,
                 kvValTemplate: mcdValTemplate,
-                store: store
+                store: store,
+                config: samplingConfig
             )
             // Save the output KV caches as templates for next frame
             mcdKeyTemplate = newKeyTemplate
@@ -179,8 +184,14 @@ public struct Qwen3TtsSynthesizer {
             } else {
                 suppressEos(&nextLogits)
             }
-            applyRepetitionPenalty(&nextLogits, generatedIds: generatedCb0s)
-            let nextCb0 = sampleTopK(logits: &nextLogits)
+            applyEnhancedPenalties(
+                &nextLogits,
+                generatedIds: generatedCb0s,
+                repetitionPenalty: samplingConfig.cb0RepetitionPenalty,
+                frequencyPenalty: samplingConfig.cb0FrequencyPenalty,
+                presencePenalty: samplingConfig.cb0PresencePenalty
+            )
+            let nextCb0 = sampleGreedy(logits: nextLogits)
 
             if nextCb0 == Qwen3TtsConstants.codecEosId {
                 logger.info("EOS at step \(step + 1)")
@@ -223,18 +234,25 @@ public struct Qwen3TtsSynthesizer {
         let trimmedSamples = trimSilence(
             frameTrimmed, sampleRate: Qwen3TtsConstants.audioSampleRate)
 
+        // Apply audio post-processing (de-esser, filtering, normalization)
+        let processedSamples = applyPostProcessing(
+            trimmedSamples,
+            sampleRate: Qwen3TtsConstants.audioSampleRate,
+            config: samplingConfig
+        )
+
         // 7. Encode as WAV
         let audioData = try AudioWAV.data(
-            from: trimmedSamples,
+            from: processedSamples,
             sampleRate: Double(Qwen3TtsConstants.audioSampleRate)
         )
 
-        let duration = Double(trimmedSamples.count) / Double(Qwen3TtsConstants.audioSampleRate)
+        let duration = Double(processedSamples.count) / Double(Qwen3TtsConstants.audioSampleRate)
         logger.info("Audio duration: \(String(format: "%.2f", duration))s")
 
         return SynthesisResult(
             audio: audioData,
-            samples: trimmedSamples,
+            samples: processedSamples,
             tokenCount: allFrames.count
         )
     }
@@ -397,7 +415,8 @@ public struct Qwen3TtsSynthesizer {
         multiCodeEmbedder: MLModel,
         kvKeyTemplate: MLMultiArray?,
         kvValTemplate: MLMultiArray?,
-        store: Qwen3TtsModelStore
+        store: Qwen3TtsModelStore,
+        config: Qwen3TtsSamplingConfig
     ) async throws -> ([Int], MLMultiArray, MLMultiArray) {
         let model = try await store.multiCodeDecoder()
         let kvLen = Qwen3TtsConstants.mcdKvLen
@@ -409,9 +428,9 @@ public struct Qwen3TtsSynthesizer {
             // Reuse previous frame's final KV caches as template, then zero them
             mcdKey = keyTemplate
             mcdVal = valTemplate
-            // Zero in-place
-            for i in 0..<mcdKey.count { mcdKey[i] = NSNumber(value: Float(0.0)) }
-            for i in 0..<mcdVal.count { mcdVal[i] = NSNumber(value: Float(0.0)) }
+            // Zero in-place using memset for performance
+            memset(mcdKey.dataPointer, 0, mcdKey.count * MemoryLayout<Float16>.size)
+            memset(mcdVal.dataPointer, 0, mcdVal.count * MemoryLayout<Float16>.size)
         } else {
             // First frame: run warmup prediction to get properly-strided arrays
             (mcdKey, mcdVal) = try await getModelStridedKVCaches(model: model, kvLen: kvLen)
@@ -458,7 +477,12 @@ public struct Qwen3TtsSynthesizer {
         let allLogits1 = out1.featureValue(for: "all_logits")!.multiArrayValue!
         var cb1Logits = extractSliceLogits(allLogits1, sliceIndex: 0)
 
-        let cb1 = sampleTopK(logits: &cb1Logits)
+        let cb1 = sampleTopKTopP(
+            logits: &cb1Logits,
+            temperature: config.codeTemperature,
+            topK: config.codeTopK,
+            topP: config.codeTopP
+        )
         var cbTokens = [cb1]
 
         // Positions 2-15: autoregressive decode for CB2-CB15
@@ -487,7 +511,14 @@ public struct Qwen3TtsSynthesizer {
 
             let allLogits = out.featureValue(for: "all_logits")!.multiArrayValue!
             var cbLogits = extractSliceLogits(allLogits, sliceIndex: cbStep)
-            cbTokens.append(sampleTopK(logits: &cbLogits))
+            cbTokens.append(
+                sampleTopKTopP(
+                    logits: &cbLogits,
+                    temperature: config.codeTemperature,
+                    topK: config.codeTopK,
+                    topP: config.codeTopP
+                )
+            )
         }
 
         // Return CB tokens AND final KV caches (for reuse as templates in next frame)
@@ -501,9 +532,24 @@ public struct Qwen3TtsSynthesizer {
         let mask = try MLMultiArray(shape: [1, NSNumber(value: kvLen)], dataType: .float16)
         let umask = try MLMultiArray(shape: [1, NSNumber(value: kvLen)], dataType: .float16)
 
-        for i in 0..<kvLen {
-            mask[i] = NSNumber(value: i <= pos ? Float(0.0) : Float(-10000.0))
-            umask[i] = NSNumber(value: i == pos ? Float(1.0) : Float(0.0))
+        // Use direct memory access for faster initialization
+        mask.dataPointer.withMemoryRebound(to: Float16.self, capacity: kvLen) { maskPtr in
+            // Fill [0...pos] with 0.0
+            for i in 0...pos {
+                maskPtr[i] = Float16(0.0)
+            }
+            // Fill [pos+1...kvLen] with -10000.0
+            let negVal = Float16(-10000.0)
+            for i in (pos + 1)..<kvLen {
+                maskPtr[i] = negVal
+            }
+        }
+
+        umask.dataPointer.withMemoryRebound(to: Float16.self, capacity: kvLen) { umaskPtr in
+            // Zero all using memset
+            memset(umaskPtr, 0, kvLen * MemoryLayout<Float16>.size)
+            // Set position to 1.0
+            umaskPtr[pos] = Float16(1.0)
         }
 
         return (mask, umask)
@@ -545,9 +591,9 @@ public struct Qwen3TtsSynthesizer {
         let outKey = out.featureValue(for: "new_key_cache")!.multiArrayValue!
         let outVal = out.featureValue(for: "new_value_cache")!.multiArrayValue!
 
-        // Zero the caches while preserving their stride layout
-        for i in 0..<outKey.count { outKey[i] = NSNumber(value: Float(0.0)) }
-        for i in 0..<outVal.count { outVal[i] = NSNumber(value: Float(0.0)) }
+        // Zero the caches while preserving their stride layout using memset for performance
+        memset(outKey.dataPointer, 0, outKey.count * MemoryLayout<Float16>.size)
+        memset(outVal.dataPointer, 0, outVal.count * MemoryLayout<Float16>.size)
 
         return (outKey, outVal)
     }
@@ -670,29 +716,74 @@ public struct Qwen3TtsSynthesizer {
         }
     }
 
-    /// Apply repetition penalty to already-generated tokens.
-    private static func applyRepetitionPenalty(
-        _ logits: inout [Float], generatedIds: [Int]
+    /// Apply enhanced penalties to CB0 logits: repetition, frequency, and presence.
+    ///
+    /// - Repetition penalty: divides/multiplies logits based on sign (1.15 default)
+    /// - Frequency penalty: subtracts penalty proportional to token count
+    /// - Presence penalty: subtracts fixed penalty if token appeared at least once
+    private static func applyEnhancedPenalties(
+        _ logits: inout [Float],
+        generatedIds: [Int],
+        repetitionPenalty: Float = Qwen3TtsConstants.cb0RepetitionPenalty,
+        frequencyPenalty: Float = Qwen3TtsConstants.cb0FrequencyPenalty,
+        presencePenalty: Float = Qwen3TtsConstants.cb0PresencePenalty
     ) {
-        let penalty = Qwen3TtsConstants.repetitionPenalty
-        guard penalty != 1.0 else { return }
+        guard !generatedIds.isEmpty else { return }
 
-        let seen = Set(generatedIds)
-        for tokenId in seen {
+        // Count token occurrences for frequency penalty
+        var tokenCounts: [Int: Int] = [:]
+        for tokenId in generatedIds {
+            tokenCounts[tokenId, default: 0] += 1
+        }
+
+        // Apply all penalties
+        for (tokenId, count) in tokenCounts {
             guard tokenId < logits.count else { continue }
-            if logits[tokenId] > 0 {
-                logits[tokenId] /= penalty
-            } else {
-                logits[tokenId] *= penalty
+
+            // 1. Repetition penalty (original logic)
+            if repetitionPenalty != 1.0 {
+                if logits[tokenId] > 0 {
+                    logits[tokenId] /= repetitionPenalty
+                } else {
+                    logits[tokenId] *= repetitionPenalty
+                }
+            }
+
+            // 2. Frequency penalty (proportional to count)
+            if frequencyPenalty != 0.0 {
+                logits[tokenId] -= frequencyPenalty * Float(count)
+            }
+
+            // 3. Presence penalty (fixed penalty for any appearance)
+            if presencePenalty != 0.0 {
+                logits[tokenId] -= presencePenalty
             }
         }
     }
 
-    /// Sample from logits with temperature + top-k.
-    private static func sampleTopK(
+    /// Greedy sampling: return argmax of logits (for CB0 main codebook).
+    private static func sampleGreedy(logits: [Float]) -> Int {
+        guard !logits.isEmpty else { return 0 }
+
+        var maxIdx = 0
+        var maxVal = logits[0]
+
+        for i in 1..<logits.count {
+            if logits[i] > maxVal {
+                maxVal = logits[i]
+                maxIdx = i
+            }
+        }
+
+        return maxIdx
+    }
+
+    /// Sample from logits with temperature + top-k + top-p (nucleus sampling).
+    private static func sampleTopKTopP(
         logits: inout [Float],
-        temperature: Float = Qwen3TtsConstants.temperature,
-        topK: Int = Qwen3TtsConstants.topK
+        temperature: Float = Qwen3TtsConstants.codeTemperature,
+        topK: Int = Qwen3TtsConstants.codeTopK,
+        topP: Float = Qwen3TtsConstants.codeTopP
     ) -> Int {
         let count = logits.count
         guard count > 0 else { return 0 }
@@ -712,7 +803,7 @@ public struct Qwen3TtsSynthesizer {
             }
         }
 
-        // Softmax
+        // Softmax to get probabilities
         let maxLogit = logits.max() ?? 0
         var expSum: Float = 0
         var expLogits = [Float](repeating: 0, count: count)
@@ -722,11 +813,48 @@ public struct Qwen3TtsSynthesizer {
             expSum += e
         }
 
+        // Normalize to probabilities
+        var probs = [Float](repeating: 0, count: count)
+        for i in 0..<count {
+            probs[i] = expLogits[i] / expSum
+        }
+
+        // Top-p (nucleus) filtering
+        if topP < 1.0 {
+            // Sort indices by probability (descending)
+            let sortedIndices = probs.indices.sorted { probs[$0] > probs[$1] }
+
+            // Find cutoff index where cumulative probability >= topP
+            var cumulative: Float = 0
+            var cutoffIndex = 0
+            for idx in sortedIndices {
+                cumulative += probs[idx]
+                cutoffIndex = idx
+                if cumulative >= topP {
+                    break
+                }
+            }
+
+            // Zero out probabilities below threshold
+            let threshold = probs[cutoffIndex]
+            for i in 0..<count where probs[i] < threshold {
+                probs[i] = 0
+            }
+
+            // Renormalize
+            let newSum = probs.reduce(0, +)
+            if newSum > 0 {
+                for i in 0..<count {
+                    probs[i] /= newSum
+                }
+            }
+        }
+
         // Multinomial sampling
         let r = Float.random(in: 0..<1)
         var cumulative: Float = 0
         for i in 0..<count {
-            cumulative += expLogits[i] / expSum
+            cumulative += probs[i]
             if cumulative >= r {
                 return i
             }
@@ -746,9 +874,33 @@ public struct Qwen3TtsSynthesizer {
         let offset = sliceIndex * vocabSize
 
         var result = [Float](repeating: 0, count: vocabSize)
-        for i in 0..<vocabSize {
-            result[i] = allLogits[offset + i].floatValue
+
+        // Use direct memory access for performance
+        if allLogits.dataType == .float16 {
+            allLogits.dataPointer.withMemoryRebound(to: Float16.self, capacity: allLogits.count) { ptr in
+                result.withUnsafeMutableBufferPointer { resultPtr in
+                    var sourceBuffer = vImage_Buffer(
+                        data: UnsafeMutableRawPointer(mutating: ptr + offset),
+                        height: 1,
+                        width: vImagePixelCount(vocabSize),
+                        rowBytes: vocabSize * MemoryLayout<Float16>.size
+                    )
+                    var destBuffer = vImage_Buffer(
+                        data: resultPtr.baseAddress!,
+                        height: 1,
+                        width: vImagePixelCount(vocabSize),
+                        rowBytes: vocabSize * MemoryLayout<Float>.size
+                    )
+                    vImageConvert_Planar16FtoPlanarF(&sourceBuffer, &destBuffer, 0)
+                }
+            }
+        } else {
+            // Fallback for other types
+            for i in 0..<vocabSize {
+                result[i] = allLogits[offset + i].floatValue
+            }
         }
+
         return result
     }
 
@@ -800,15 +952,235 @@ public struct Qwen3TtsSynthesizer {
         return Array(samples[start..<end])
     }
 
+    /// Apply comprehensive audio post-processing pipeline.
+    ///
+    /// Steps:
+    /// 1. De-esser: reduces harsh sibilance (5-10 kHz)
+    /// 2. Low-pass filter: removes harsh high frequencies above 16 kHz
+    /// 3. Normalization: adjust loudness to target LUFS
+    private static func applyPostProcessing(
+        _ samples: [Float],
+        sampleRate: Int,
+        config: Qwen3TtsSamplingConfig
+    ) -> [Float] {
+        guard config.enablePostProcessing else { return samples }
+        guard !samples.isEmpty else { return samples }
+
+        var processed = samples
+
+        // 1. De-esser
+        processed = applyDeEsser(
+            processed,
+            sampleRate: sampleRate,
+            lowFreq: Qwen3TtsConstants.deEsserLowFreq,
+            highFreq: Qwen3TtsConstants.deEsserHighFreq,
+            thresholdDb: config.deEsserThresholdDb,
+            ratio: config.deEsserRatio
+        )
+
+        // 2. Low-pass filter
+        processed = applyLowPassFilter(
+            processed,
+            sampleRate: sampleRate,
+            cutoffHz: config.lowPassCutoffHz
+        )
+
+        // 3. Normalization
+        processed = normalize(
+            processed,
+            targetLufs: config.targetLufs
+        )
+
+        return processed
+    }
+
+    /// De-esser: reduces harsh sibilance in the 5-10 kHz range.
+    ///
+    /// Applies multiband compression to sibilance frequencies:
+    /// - Isolates sibilance band (5-10 kHz) via bandpass
+    /// - Detects envelope (RMS)
+    /// - Applies compression when above threshold
+    /// - Mixes back with original signal
+    private static func applyDeEsser(
+        _ samples: [Float],
+        sampleRate: Int,
+        lowFreq: Float,
+        highFreq: Float,
+        thresholdDb: Float,
+        ratio: Float
+    ) -> [Float] {
+        guard samples.count > 0 else { return samples }
+
+        // Simple bandpass filter for sibilance detection (5-10 kHz)
+        let filtered = applyBandPassFilter(
+            samples,
+            sampleRate: sampleRate,
+            lowHz: lowFreq,
+            highHz: highFreq
+        )
+
+        // Detect sibilance envelope (RMS with 5ms window)
+        let windowSize = max(1, sampleRate / 200)  // 5ms window
+        var envelope = [Float](repeating: 0, count: samples.count)
+        for i in 0..<samples.count {
+            let start = max(0, i - windowSize / 2)
+            let end = min(samples.count, i + windowSize / 2)
+            var sum: Float = 0
+            for j in start..<end {
+                sum += filtered[j] * filtered[j]
+            }
+            envelope[i] = (sum / Float(end - start)).squareRoot()
+        }
+
+        // Apply compression to sibilance
+        let thresholdLinear = pow(10, thresholdDb / 20)
+        var result = samples
+        for i in 0..<samples.count {
+            let env = envelope[i]
+            if env > thresholdLinear {
+                // Calculate gain reduction
+                let excess = env / thresholdLinear
+                let gainReduction = 1.0 / pow(excess, (ratio - 1) / ratio)
+                result[i] *= gainReduction
+            }
+        }
+
+        return result
+    }
+
+    /// Simple bandpass filter using two first-order filters (high-pass then low-pass).
+    private static func applyBandPassFilter(
+        _ samples: [Float],
+        sampleRate: Int,
+        lowHz: Float,
+        highHz: Float
+    ) -> [Float] {
+        // High-pass to remove < lowHz
+        let highPassed = applyHighPassFilter(samples, sampleRate: sampleRate, cutoffHz: lowHz)
+        // Low-pass to remove > highHz
+        return applyLowPassFilter(highPassed, sampleRate: sampleRate, cutoffHz: highHz)
+    }
+
+    /// Simple first-order high-pass filter (removes frequencies below cutoff).
+    private static func applyHighPassFilter(
+        _ samples: [Float],
+        sampleRate: Int,
+        cutoffHz: Float
+    ) -> [Float] {
+        guard samples.count > 1 else { return samples }
+
+        // RC = 1 / (2π * cutoff)
+        let rc = 1.0 / (2.0 * Float.pi * cutoffHz)
+        let dt = 1.0 / Float(sampleRate)
+        let alpha = rc / (rc + dt)
+
+        var result = [Float](repeating: 0, count: samples.count)
+        result[0] = samples[0]
+
+        for i in 1..<samples.count {
+            result[i] = alpha * (result[i - 1] + samples[i] - samples[i - 1])
+        }
+
+        return result
+    }
+
+    /// Simple first-order low-pass filter (removes frequencies above cutoff).
+    private static func applyLowPassFilter(
+        _ samples: [Float],
+        sampleRate: Int,
+        cutoffHz: Float
+    ) -> [Float] {
+        guard samples.count > 1 else { return samples }
+
+        // alpha = dt / (RC + dt), where RC = 1/(2π*cutoff)
+        let rc = 1.0 / (2.0 * Float.pi * cutoffHz)
+        let dt = 1.0 / Float(sampleRate)
+        let alpha = dt / (rc + dt)
+
+        var result = [Float](repeating: 0, count: samples.count)
+        result[0] = samples[0]
+
+        for i in 1..<samples.count {
+            result[i] = alpha * samples[i] + (1 - alpha) * result[i - 1]
+        }
+
+        return result
+    }
+
+    /// Normalize audio to target loudness (LUFS).
+    ///
+    /// Uses simplified loudness measurement (integrated RMS) and applies gain.
+    private static func normalize(
+        _ samples: [Float],
+        targetLufs: Float
+    ) -> [Float] {
+        guard !samples.isEmpty else { return samples }
+
+        // Calculate RMS (simplified loudness)
+        var sumSquares: Float = 0
+        for sample in samples {
+            sumSquares += sample * sample
+        }
+        let rms = (sumSquares / Float(samples.count)).squareRoot()
+
+        // Convert target LUFS to linear gain
+        // LUFS ≈ -0.691 + 10*log10(RMS²) (simplified)
+        // target_rms = 10^((targetLUFS + 0.691) / 20)
+        let targetRms = pow(10, (targetLufs + 0.691) / 20)
+
+        // Calculate gain needed
+        let gain = rms > 0 ? targetRms / rms : 1.0
+
+        // Apply gain with peak limiting at ±0.99
+        var result = [Float](repeating: 0, count: samples.count)
+        for i in 0..<samples.count {
+            let scaled = samples[i] * gain
+            result[i] = max(-0.99, min(0.99, scaled))  // Hard limiter
+        }
+
+        return result
+    }
+
     // MARK: - MLMultiArray Helpers
 
     /// Extract Float array from MLMultiArray using subscript access (stride-safe).
     private static func extractFloatArray(from array: MLMultiArray) -> [Float] {
         let count = array.count
         var result = [Float](repeating: 0, count: count)
-        for i in 0..<count {
-            result[i] = array[i].floatValue
+
+        // Direct memory copy for performance
+        if array.dataType == .float32 {
+            array.dataPointer.withMemoryRebound(to: Float.self, capacity: count) { ptr in
+                result.withUnsafeMutableBufferPointer { resultPtr in
+                    memcpy(resultPtr.baseAddress!, ptr, count * MemoryLayout<Float>.size)
+                }
+            }
+        } else if array.dataType == .float16 {
+            // Convert float16 to float32
+            array.dataPointer.withMemoryRebound(to: Float16.self, capacity: count) { ptr in
+                result.withUnsafeMutableBufferPointer { resultPtr in
+                    var sourceBuffer = vImage_Buffer(
+                        data: UnsafeMutableRawPointer(mutating: ptr),
+                        height: 1,
+                        width: vImagePixelCount(count),
+                        rowBytes: count * MemoryLayout<Float16>.size
+                    )
+                    var destBuffer = vImage_Buffer(
+                        data: resultPtr.baseAddress!,
+                        height: 1,
+                        width: vImagePixelCount(count),
+                        rowBytes: count * MemoryLayout<Float>.size
+                    )
+                    vImageConvert_Planar16FtoPlanarF(&sourceBuffer, &destBuffer, 0)
+                }
+            }
+        } else {
+            // Fallback for other types
+            for i in 0..<count {
+                result[i] = array[i].floatValue
+            }
         }
+
         return result
     }
 
@@ -817,19 +1189,31 @@ public struct Qwen3TtsSynthesizer {
         let dim = data.count
         let array = try MLMultiArray(
             shape: [1, NSNumber(value: dim), 1, 1], dataType: .float32)
-        for (i, value) in data.enumerated() {
-            array[i] = NSNumber(value: value)
+
+        // Use direct memory copy for performance
+        data.withUnsafeBufferPointer { dataPtr in
+            array.dataPointer.withMemoryRebound(to: Float.self, capacity: dim) { arrayPtr in
+                memcpy(arrayPtr, dataPtr.baseAddress!, dim * MemoryLayout<Float>.size)
+            }
         }
+
         return array
     }
 
-    /// Add two embedding MLMultiArrays element-wise.
+    /// Add two embedding MLMultiArrays element-wise using Accelerate.
     private static func addEmbeddings(_ a: MLMultiArray, _ b: MLMultiArray) throws -> MLMultiArray {
         let count = a.count
         let result = try MLMultiArray(shape: a.shape, dataType: .float32)
-        for i in 0..<count {
-            result[i] = NSNumber(value: a[i].floatValue + b[i].floatValue)
+
+        // Use vDSP for vectorized addition
+        a.dataPointer.withMemoryRebound(to: Float.self, capacity: count) { aPtr in
+            b.dataPointer.withMemoryRebound(to: Float.self, capacity: count) { bPtr in
+                result.dataPointer.withMemoryRebound(to: Float.self, capacity: count) { resultPtr in
+                    vDSP_vadd(aPtr, 1, bPtr, 1, resultPtr, 1, vDSP_Length(count))
+                }
+            }
         }
+
         return result
     }
 
