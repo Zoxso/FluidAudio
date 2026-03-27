@@ -166,7 +166,7 @@ let samplesPerWindow = 16         // 1ms per window
 ### 1. Model Loading (`AsrModels.downloadAndLoad`)
 
 ```swift
-// Sources/FluidAudio/ASR/AsrModels.swift
+// Sources/FluidAudio/ASR/Parakeet/AsrModels.swift
 public static func downloadAndLoad(version: AsrModelVersion) async throws -> AsrModels
 
 Flow:
@@ -184,7 +184,7 @@ Flow:
 ### 2. Manager Initialization (`AsrManager.initialize`)
 
 ```swift
-// Sources/FluidAudio/ASR/AsrManager.swift
+// Sources/FluidAudio/ASR/Parakeet/AsrManager.swift
 public func initialize(models: AsrModels) async throws
 
 Flow:
@@ -203,7 +203,7 @@ Flow:
 ### 3. Transcription (`AsrManager.transcribe`)
 
 ```swift
-// Sources/FluidAudio/ASR/AsrManager.swift
+// Sources/FluidAudio/ASR/Parakeet/AsrManager.swift
 public func transcribe(_ samples: [Float], source: AudioSource = .file) async throws -> ASRResult
 
 Flow:
@@ -219,7 +219,7 @@ Flow:
 ### 4. Chunk Processing (`ChunkProcessor.processAudioChunks`)
 
 ```swift
-// Sources/FluidAudio/ASR/ChunkProcessor.swift
+// Sources/FluidAudio/ASR/Parakeet/ChunkProcessor.swift
 static func processAudioChunks() async throws -> ASRResult
 
 Flow for each chunk:
@@ -246,7 +246,7 @@ After all chunks:
 ### 5. TDT Beam Search (`TdtDecoder.decode`)
 
 ```swift
-// Sources/FluidAudio/ASR/TDT/TdtDecoder.swift
+// Sources/FluidAudio/ASR/Parakeet/Decoder/TdtDecoderV3.swift
 func decode(encodedAudio: MLMultiArray, decoderState: inout TdtDecoderState) throws -> [TokenWindow]
 
 Flow:
@@ -327,7 +327,7 @@ Output:
 TDT-CTC-110M uses **1 decoder LSTM layer** (vs 2 in v2/v3):
 
 ```swift
-// Sources/FluidAudio/ASR/AsrModels.swift
+// Sources/FluidAudio/ASR/Parakeet/AsrModels.swift
 public var decoderLayers: Int {
     switch self {
     case .tdtCtc110m: return 1
@@ -341,7 +341,7 @@ This reduces model size and improves inference speed while maintaining competiti
 ### TDT Decoder Settings
 
 ```swift
-// Sources/FluidAudio/ASR/TDT/TdtDecoder.swift
+// Sources/FluidAudio/ASR/Parakeet/Decoder/TdtDecoderV3.swift
 let beamSize = 10                    // Beam search width
 let blankId = 1023                   // Blank token ID
 let encoderHiddenSize = 512          // Encoder output dim
