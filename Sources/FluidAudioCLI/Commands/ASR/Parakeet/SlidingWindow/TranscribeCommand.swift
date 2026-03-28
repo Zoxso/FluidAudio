@@ -867,7 +867,7 @@ enum TranscribeCommand {
 
             Streaming variants (for --parakeet-variant):
                 parakeet-eou-160ms, parakeet-eou-320ms, parakeet-eou-1280ms,
-                nemotron-80ms, nemotron-160ms, nemotron-560ms, nemotron-1120ms
+                nemotron-560ms, nemotron-1120ms
                 (TDT models use --streaming + --model-version instead)
 
             Examples:

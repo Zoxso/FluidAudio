@@ -48,15 +48,17 @@ public enum StreamingChunkSize: Sendable {
 
     /// Number of audio samples per chunk
     /// Calculated from mel frames: (mel_frames - 1) * hop_length for center-padded mel spectrogram
+    /// computeFlat uses: numFrames = 1 + (audioCount + 2*(nFFT/2) - winLength) / hopLength
+    /// so chunkSamples = (melFrames - 1) * hopLength
     public var chunkSamples: Int {
         switch self {
-        case .ms160: return 2720  // 17 * 160 = 2720 samples (170ms)
+        case .ms160: return 2560  // (17-1) * 160 = 2560 samples (160ms)
         case .ms320:
             // 320ms mode: 64 mel frames from NeMo's streaming_cfg.chunk_size[1]
-            // computeFlat uses: numFrames = audioCount / hopLength
-            // So we need: 64 * 160 = 10240 samples to get exactly 64 mel frames
-            return 10240
-        case .ms1280: return 20640  // 129 * 160 = 20640 samples (1290ms)
+            // Formula: (mel_frames - 1) * hop_length = (64-1) * 160 = 10080 samples
+            // This is ~630ms of audio per chunk (but 320ms latency due to shift)
+            return 10080
+        case .ms1280: return 20480  // (129-1) * 160 = 20480 samples (1280ms)
         }
     }
 
