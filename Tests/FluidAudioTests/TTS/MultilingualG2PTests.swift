@@ -111,7 +111,7 @@ final class MultilingualG2PTests: XCTestCase {
 
     func testRepoMultilingualG2P() {
         // Multilingual G2P models are bundled inside the kokoro repo
-        XCTAssertEqual(Repo.kokoro.folderName, "kokoro")
+        XCTAssertEqual(Repo.kokoro.folderName, "kokoro-82m")
         XCTAssertEqual(Repo.kokoro.remotePath, "FluidInference/kokoro-82m-coreml")
     }
 }
