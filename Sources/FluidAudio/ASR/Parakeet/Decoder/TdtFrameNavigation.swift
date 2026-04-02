@@ -21,30 +21,31 @@ internal struct TdtFrameNavigation {
         timeJump: Int?,
         contextFrameAdjustment: Int
     ) -> Int {
-        if let prevTimeJump = timeJump {
-            // Streaming continuation: timeJump represents decoder position beyond previous chunk
-            // For the new chunk, we need to account for:
-            // 1. How far the decoder advanced past the previous chunk (prevTimeJump)
-            // 2. The overlap/context between chunks (contextFrameAdjustment)
-            //
-            // If prevTimeJump > 0: decoder went past previous chunk's frames
-            // If contextFrameAdjustment < 0: decoder should skip frames (overlap with previous chunk)
-            // If contextFrameAdjustment > 0: decoder should start later (adaptive context)
-            // Net position = prevTimeJump + contextFrameAdjustment (add adjustment to decoder position)
-
-            // SPECIAL CASE: When prevTimeJump = 0 and contextFrameAdjustment = 0,
-            // decoder finished exactly at boundary but chunk has physical overlap
-            // Need to skip the overlap frames to avoid re-processing
-            if prevTimeJump == 0 && contextFrameAdjustment == 0 {
-                // Skip standard overlap (2.0s = 25 frames at 0.08s per frame)
-                return ASRConstants.standardOverlapFrames
-            } else {
-                return max(0, prevTimeJump + contextFrameAdjustment)
-            }
-        } else {
-            // First chunk: start from beginning, accounting for any context frames that were already processed
+        // First chunk: start from beginning, accounting for any context frames already processed
+        guard let prevTimeJump = timeJump else {
             return contextFrameAdjustment
         }
+
+        // Streaming continuation: timeJump represents decoder position beyond previous chunk
+        // For the new chunk, we need to account for:
+        // 1. How far the decoder advanced past the previous chunk (prevTimeJump)
+        // 2. The overlap/context between chunks (contextFrameAdjustment)
+        //
+        // If prevTimeJump > 0: decoder went past previous chunk's frames
+        // If contextFrameAdjustment < 0: decoder should skip frames (overlap with previous chunk)
+        // If contextFrameAdjustment > 0: decoder should start later (adaptive context)
+        // Net position = prevTimeJump + contextFrameAdjustment (add adjustment to decoder position)
+
+        // SPECIAL CASE: When prevTimeJump = 0 and contextFrameAdjustment = 0,
+        // decoder finished exactly at boundary but chunk has physical overlap
+        // Need to skip the overlap frames to avoid re-processing
+        if prevTimeJump == 0 && contextFrameAdjustment == 0 {
+            // Skip standard overlap (2.0s = 25 frames at 0.08s per frame)
+            return ASRConstants.standardOverlapFrames
+        }
+
+        // Normal streaming continuation
+        return max(0, prevTimeJump + contextFrameAdjustment)
     }
 
     /// Initialize frame navigation state for decoding loop.

@@ -223,12 +223,4 @@ internal struct TdtModelInference {
         }
         return value
     }
-
-    /// Convert Int to Int32 with bounds checking for BLAS operations.
-    private func makeBlasIndex(_ value: Int, label: String) throws -> Int32 {
-        guard value >= 0, value <= Int32.max else {
-            throw ASRError.processingFailed("\(label) out of BLAS range: \(value)")
-        }
-        return Int32(value)
-    }
 }
