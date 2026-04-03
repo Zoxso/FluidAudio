@@ -10,7 +10,7 @@ public enum CohereAsrConfig {
     // MARK: Audio
 
     public static let sampleRate = 16000
-    public static let numMelBins = 80
+    public static let numMelBins = 128  // Cohere uses 128 mel bins (not Whisper's 80)
 
     /// Fixed audio length in frames (30 seconds at 16kHz).
     public static let fixedAudioLength = 3000

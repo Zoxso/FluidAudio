@@ -80,6 +80,13 @@ struct FluidAudioCLI {
             await CohereAsrBenchmark.runCLI(arguments: Array(arguments.dropFirst(2)))
         case "cohere-transcribe":
             await CohereTranscribeCommand.run(arguments: Array(arguments.dropFirst(2)))
+        case "test-cohere-encoder":
+            if #available(macOS 15, *) {
+                await CohereEncoderTest.run(arguments: Array(arguments.dropFirst(2)))
+            } else {
+                cliLogger.error("Cohere Transcribe requires macOS 15+")
+                exit(1)
+            }
         case "help", "--help", "-h":
             printUsage()
         default:

@@ -35,16 +35,48 @@ public struct CohereAsrModels: Sendable {
     ) async throws -> CohereAsrModels {
         let modelConfig = MLModelConfiguration()
         modelConfig.computeUnits = computeUnits
+        logger.info("Loading models with compute units: \(computeUnits.rawValue)")
 
         logger.info("Loading Cohere Transcribe models from \(directory.path)")
         let start = CFAbsoluteTimeGetCurrent()
 
-        // Load encoder (3.6GB)
-        let audioEncoder = try await loadModel(
-            named: "cohere_audio_encoder",
-            from: directory,
-            configuration: modelConfig
-        )
+        // Load encoder (3.6GB) - try v4 (coremltools 8.2) first, fallback to v3, v2, v1
+        let audioEncoder: MLModel
+        if FileManager.default.fileExists(
+            atPath: directory.appendingPathComponent("cohere_audio_encoder_v4.mlpackage").path)
+        {
+            logger.info("Loading cohere_audio_encoder_v4 (coremltools 8.2)")
+            audioEncoder = try await loadModel(
+                named: "cohere_audio_encoder_v4",
+                from: directory,
+                configuration: modelConfig
+            )
+        } else if FileManager.default.fileExists(
+            atPath: directory.appendingPathComponent("cohere_audio_encoder_v3.mlpackage").path)
+        {
+            logger.info("Loading cohere_audio_encoder_v3 (coremltools 8.1)")
+            audioEncoder = try await loadModel(
+                named: "cohere_audio_encoder_v3",
+                from: directory,
+                configuration: modelConfig
+            )
+        } else if FileManager.default.fileExists(
+            atPath: directory.appendingPathComponent("cohere_audio_encoder_v2.mlpackage").path)
+        {
+            logger.info("Loading cohere_audio_encoder_v2")
+            audioEncoder = try await loadModel(
+                named: "cohere_audio_encoder_v2",
+                from: directory,
+                configuration: modelConfig
+            )
+        } else {
+            logger.info("Loading cohere_audio_encoder")
+            audioEncoder = try await loadModel(
+                named: "cohere_audio_encoder",
+                from: directory,
+                configuration: modelConfig
+            )
+        }
 
         // Load decoder (293MB)
         let decoder = try await loadModel(

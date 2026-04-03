@@ -20,10 +20,17 @@ private let logger = Logger(subsystem: "FluidAudio", category: "CohereAsrManager
 @available(macOS 15, iOS 18, *)
 public actor CohereAsrManager {
     private var models: CohereAsrModels?
-    private let melExtractor: WhisperMelSpectrogram
+    private let melExtractor: AudioMelSpectrogram
 
     public init() {
-        self.melExtractor = WhisperMelSpectrogram()
+        // Cohere uses 128 mel bins (not Whisper's 80)
+        self.melExtractor = AudioMelSpectrogram(
+            sampleRate: 16000,
+            nMels: 128,
+            nFFT: 512,
+            hopLength: 160,
+            winLength: 400
+        )
     }
 
     /// Load all models from the specified directory.
@@ -45,10 +52,50 @@ public actor CohereAsrManager {
         language: String? = nil,
         maxNewTokens: Int = 512
     ) async throws -> String {
-        let mel = melExtractor.compute(audio: audioSamples)
-        guard !mel.isEmpty else {
+        // Use computeFlatTransposed for NeMo preprocessing (preemph, center padding, log)
+        let (melFlat, melLength, numFrames) = melExtractor.computeFlatTransposed(audio: audioSamples)
+
+        guard melLength > 0 else {
             throw CohereAsrError.generationFailed("Audio too short to extract mel spectrogram")
         }
+
+        // Reshape from flat [T * nMels] to [[nMels, T]] and apply per-feature normalization
+        let nMels = CohereAsrConfig.numMelBins
+        let eps: Float = 1e-5  // DITHER_CONSTANT
+
+        var mel = [[Float]](repeating: [Float](repeating: 0, count: melLength), count: nMels)
+
+        // Step 1: Reshape
+        for t in 0..<melLength {
+            for m in 0..<nMels {
+                mel[m][t] = melFlat[t * nMels + m]
+            }
+        }
+
+        // Step 2: Per-feature normalization (mean=0, std=1 per mel bin)
+        for m in 0..<nMels {
+            // Compute mean
+            var sum: Float = 0
+            for t in 0..<melLength {
+                sum += mel[m][t]
+            }
+            let mean = sum / Float(melLength)
+
+            // Compute std
+            var sumSq: Float = 0
+            for t in 0..<melLength {
+                let diff = mel[m][t] - mean
+                sumSq += diff * diff
+            }
+            let variance = sumSq / Float(melLength - 1)
+            let std = sqrt(variance) + eps
+
+            // Normalize
+            for t in 0..<melLength {
+                mel[m][t] = (mel[m][t] - mean) / std
+            }
+        }
+
         return try await transcribe(melSpectrogram: mel, language: language, maxNewTokens: maxNewTokens)
     }
 
@@ -92,6 +139,22 @@ public actor CohereAsrManager {
         let t1 = CFAbsoluteTimeGetCurrent()
         let encoderHiddenStates = try encodeAudio(melSpectrogram: melSpectrogram, models: models)
         let audioEncodeTime = CFAbsoluteTimeGetCurrent() - t1
+
+        // Debug: Check encoder output
+        if encoderHiddenStates.count > 0 {
+            let ptr = encoderHiddenStates.dataPointer.bindMemory(to: Float.self, capacity: encoderHiddenStates.count)
+            var minVal: Float = Float.greatestFiniteMagnitude
+            var maxVal: Float = -Float.greatestFiniteMagnitude
+            for i in 0..<min(10000, encoderHiddenStates.count) {
+                let val = ptr[i]
+                if val.isFinite {
+                    minVal = min(minVal, val)
+                    maxVal = max(maxVal, val)
+                }
+            }
+            print("ENCODER OUTPUT: min=\(minVal) max=\(maxVal)")
+        }
+
         logger.debug("Audio encoding: \(String(format: "%.2f", audioEncodeTime))s")
 
         // Step 2: Autoregressive generation with decoder + LM head
@@ -120,7 +183,7 @@ public actor CohereAsrManager {
         melSpectrogram: [[Float]],
         models: CohereAsrModels
     ) throws -> MLMultiArray {
-        // Create mel input MLMultiArray (shape: [1, 80, 3000])
+        // Create mel input MLMultiArray (shape: [1, 128, 3000])
         let melInput = try createMelInput(melSpectrogram: melSpectrogram)
 
         // Run encoder
@@ -133,7 +196,39 @@ public actor CohereAsrManager {
             throw CohereAsrError.encoderFailed("No encoder_output from audio encoder")
         }
 
-        return encoderOutput
+        // Pad encoder output to fixed length (1500) for decoder compatibility
+        return try padEncoderOutput(encoderOutput, targetLength: 1500)
+    }
+
+    private func padEncoderOutput(_ encoderOutput: MLMultiArray, targetLength: Int) throws -> MLMultiArray {
+        // Encoder output shape: [batch, seq_len, hidden_dim]
+        let batch = encoderOutput.shape[0].intValue
+        let seqLen = encoderOutput.shape[1].intValue
+        let hiddenDim = encoderOutput.shape[2].intValue
+
+        if seqLen >= targetLength {
+            // Already at or exceeds target length, return as is
+            return encoderOutput
+        }
+
+        // Create padded array (already initialized to zeros by MLMultiArray)
+        let paddedShape: [NSNumber] = [
+            NSNumber(value: batch), NSNumber(value: targetLength), NSNumber(value: hiddenDim),
+        ]
+        let padded = try MLMultiArray(shape: paddedShape, dataType: encoderOutput.dataType)
+
+        // Copy original data using MLMultiArray subscripts
+        for b in 0..<batch {
+            for t in 0..<seqLen {
+                for h in 0..<hiddenDim {
+                    let srcIdx: [NSNumber] = [NSNumber(value: b), NSNumber(value: t), NSNumber(value: h)]
+                    let dstIdx: [NSNumber] = [NSNumber(value: b), NSNumber(value: t), NSNumber(value: h)]
+                    padded[dstIdx] = encoderOutput[srcIdx]
+                }
+            }
+        }
+
+        return padded
     }
 
     private func createMelInput(melSpectrogram: [[Float]]) throws -> MLMultiArray {
@@ -144,7 +239,8 @@ public actor CohereAsrManager {
         let targetFrames = CohereAsrConfig.fixedAudioLength
         let actualFrames = min(numFrames, targetFrames)
 
-        // Shape: [1, numMelBins, fixedAudioLength]
+        // Note: Mel spectrogram is already per-feature normalized
+        // Fill MLMultiArray
         let shape: [NSNumber] = [1, NSNumber(value: CohereAsrConfig.numMelBins), NSNumber(value: targetFrames)]
         let array = try MLMultiArray(shape: shape, dataType: .float32)
         let ptr = array.dataPointer.bindMemory(to: Float.self, capacity: array.count)
@@ -243,25 +339,23 @@ public actor CohereAsrManager {
     }
 
     private func decodeTokens(_ tokenIds: [Int], vocabulary: [Int: String]) -> String {
-        // Simple token-to-string decoding
+        // SentencePiece-style decoding
         var pieces: [String] = []
         for id in tokenIds {
-            if let piece = vocabulary[id] {
-                pieces.append(piece)
+            guard let piece = vocabulary[id] else { continue }
+
+            // Skip special tokens
+            if piece.hasPrefix("<|") && piece.hasSuffix("|>") {
+                continue
             }
+
+            pieces.append(piece)
         }
 
         let raw = pieces.joined()
 
-        // Basic BPE decoding (convert unicode to bytes)
-        var bytes = [UInt8]()
-        for scalar in raw.unicodeScalars {
-            if scalar.value < 256 {
-                bytes.append(UInt8(scalar.value))
-            }
-        }
-
-        let decoded = String(bytes: bytes, encoding: .utf8) ?? raw
+        // Replace SentencePiece space marker (▁ U+2581) with actual spaces
+        let decoded = raw.replacingOccurrences(of: "\u{2581}", with: " ")
         return decoded.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }
