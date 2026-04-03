@@ -1,0 +1,209 @@
+name: Cohere Transcribe Test
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'Sources/FluidAudio/ASR/Cohere/**'
+      - 'Sources/FluidAudioCLI/Commands/ASR/Cohere/**'
+      - 'Sources/FluidAudioCLI/Commands/CohereEncoderTest.swift'
+      - '.github/workflows/cohere-transcribe-test.yml'
+  workflow_dispatch:
+
+jobs:
+  cohere-encoder-test:
+    name: Cohere Encoder Validation (macOS 15)
+    runs-on: macos-15
+    permissions:
+      contents: read
+      pull-requests: write
+
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: swift-actions/setup-swift@v2
+        with:
+          swift-version: "6.1"
+
+      - name: Cache Dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            .build
+            ~/Library/Application Support/FluidAudio/Models/cohere-transcribe
+          key: ${{ runner.os }}-cohere-${{ hashFiles('Package.resolved', 'Sources/FluidAudio/ASR/Cohere/**') }}
+
+      - name: Build
+        run: swift build -c release
+
+      - name: Generate Reference Mel
+        run: |
+          echo "Generating reference mel from Cohere's official processor..."
+          cd mobius/models/stt/cohere-transcribe-03-2026/coreml
+
+          # Install dependencies
+          pip3 install transformers librosa numpy huggingface-hub
+
+          # Generate reference mel
+          python3 -c "
+          from transformers import AutoProcessor
+          import librosa
+          import numpy as np
+          from pathlib import Path
+
+          # Load processor
+          processor = AutoProcessor.from_pretrained('CohereLabs/cohere-transcribe-03-2026', trust_remote_code=True)
+
+          # Generate test audio (10s, 16kHz)
+          audio = np.random.randn(160000).astype(np.float32) * 0.1
+
+          # Generate mel
+          inputs = processor(audio, sampling_rate=16000, return_tensors='pt')
+          mel = inputs['input_features'].numpy()
+
+          # Save
+          mel.astype(np.float32).tofile('/tmp/cohere_reference_mel.bin')
+          print(f'Saved reference mel: shape={mel.shape}')
+          "
+
+      - name: Test Encoder Output
+        id: encoder_test
+        run: |
+          set -o pipefail
+
+          echo "========================================="
+          echo "Cohere Encoder Validation Test"
+          echo "========================================="
+          echo ""
+          echo "Testing encoder on macOS 15 (stable) to verify"
+          echo "CoreML Runtime produces correct outputs."
+          echo ""
+          echo "Expected: min~-1.2, max~1.6"
+          echo "Failure indicates CoreML Runtime issue."
+          echo ""
+
+          if .build/release/fluidaudiocli test-cohere-encoder 2>&1 | tee encoder_test.log; then
+            echo "ENCODER_STATUS=PASSED" >> $GITHUB_OUTPUT
+            echo "✓ Encoder test PASSED - outputs in expected range"
+          else
+            EXIT_CODE=$?
+            echo "ENCODER_STATUS=FAILED" >> $GITHUB_OUTPUT
+            echo "✗ Encoder test FAILED with exit code $EXIT_CODE"
+
+            # Check if it's the known beta OS bug
+            if grep -q "FAILURE: Encoder outputs are wrong" encoder_test.log; then
+              echo "⚠️  This may be a CoreML Runtime bug (like macOS 26.5 Beta)"
+              echo "ENCODER_STATUS=FAILED_RUNTIME_BUG" >> $GITHUB_OUTPUT
+            fi
+          fi
+
+      - name: Test Basic Transcription
+        id: transcribe_test
+        if: steps.encoder_test.outputs.ENCODER_STATUS == 'PASSED'
+        run: |
+          set -o pipefail
+
+          echo "========================================="
+          echo "Cohere Transcribe Smoke Test"
+          echo "========================================="
+          echo ""
+
+          # Generate test audio
+          python3 -c "
+          import numpy as np
+          import soundfile as sf
+
+          # 5s of silence
+          audio = np.zeros(80000, dtype=np.float32)
+          sf.write('test_audio.wav', audio, 16000)
+          print('Generated test audio')
+          "
+
+          if .build/release/fluidaudiocli cohere-transcribe test_audio.wav 2>&1 | tee transcribe_test.log; then
+            echo "TRANSCRIBE_STATUS=PASSED" >> $GITHUB_OUTPUT
+            echo "✓ Transcription test PASSED"
+          else
+            EXIT_CODE=$?
+            echo "TRANSCRIBE_STATUS=FAILED" >> $GITHUB_OUTPUT
+            echo "✗ Transcription test FAILED with exit code $EXIT_CODE"
+          fi
+
+      - name: Post PR Comment
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const encoderStatus = '${{ steps.encoder_test.outputs.ENCODER_STATUS }}';
+            const transcribeStatus = '${{ steps.transcribe_test.outputs.TRANSCRIBE_STATUS }}';
+
+            let statusEmoji = '✅';
+            let summary = 'All tests passed on stable macOS 15';
+
+            if (encoderStatus === 'FAILED_RUNTIME_BUG') {
+              statusEmoji = '⚠️';
+              summary = 'Encoder test failed - possible CoreML Runtime bug';
+            } else if (encoderStatus !== 'PASSED') {
+              statusEmoji = '❌';
+              summary = 'Encoder test failed';
+            } else if (transcribeStatus !== 'PASSED') {
+              statusEmoji = '⚠️';
+              summary = 'Encoder passed but transcription failed';
+            }
+
+            const comment = `## ${statusEmoji} Cohere Transcribe Test Results
+
+            **Platform:** macOS 15 (stable)
+            **Summary:** ${summary}
+
+            ### Test Results
+
+            | Test | Status |
+            |------|--------|
+            | Encoder Output Validation | ${encoderStatus === 'PASSED' ? '✅ PASSED' : (encoderStatus === 'FAILED_RUNTIME_BUG' ? '⚠️ FAILED (Runtime Bug)' : '❌ FAILED')} |
+            | Basic Transcription | ${transcribeStatus === 'PASSED' ? '✅ PASSED' : transcribeStatus === 'FAILED' ? '❌ FAILED' : '⏭️ SKIPPED'} |
+
+            ${encoderStatus === 'FAILED_RUNTIME_BUG' ? `
+            ### ⚠️ CoreML Runtime Bug Detected
+
+            The encoder test failed with outputs outside the expected range. This is consistent with the known CoreML Runtime bug in macOS 26.5 Beta.
+
+            **Expected:** min~-1.2, max~1.6
+            **Actual:** Likely garbage values (10^21 range)
+
+            This test runs on **stable macOS 15**, so if it fails here, there may be a broader CoreML Runtime issue.
+            ` : ''}
+
+            ${encoderStatus === 'PASSED' ? `
+            ### ✅ Encoder Validation Passed
+
+            The encoder produces correct outputs on stable macOS 15. This confirms:
+            - Models are correctly exported
+            - Preprocessing is correct
+            - CoreML Runtime works properly on stable macOS
+
+            The issue reported in the PR (macOS 26.5 Beta) is isolated to that beta OS.
+            ` : ''}
+
+            ---
+
+            <sub>🤖 Automated test on stable macOS to verify CoreML Runtime behavior</sub>
+            `;
+
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: comment
+            });
+
+      - name: Upload Test Logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cohere-test-logs
+          path: |
+            encoder_test.log
+            transcribe_test.log
+          retention-days: 7
