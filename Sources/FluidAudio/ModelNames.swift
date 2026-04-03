@@ -23,6 +23,7 @@ public enum Repo: String, CaseIterable {
     case qwen3AsrInt8 = "FluidInference/qwen3-asr-0.6b-coreml/int8"
     case multilingualG2p = "FluidInference/charsiu-g2p-byt5-coreml"
     case parakeetTdtCtc110m = "FluidInference/parakeet-tdt-ctc-110m-coreml"
+    case cohereTranscribe = "FluidInference/cohere-transcribe-03-2026-coreml"
 
     /// Repository slug (without owner)
     public var name: String {
@@ -69,6 +70,8 @@ public enum Repo: String, CaseIterable {
             return "charsiu-g2p-byt5-coreml"
         case .parakeetTdtCtc110m:
             return "parakeet-tdt-ctc-110m-coreml"
+        case .cohereTranscribe:
+            return "cohere-transcribe-03-2026-coreml"
         }
     }
 
@@ -145,6 +148,8 @@ public enum Repo: String, CaseIterable {
             return "parakeet-ctc-ja"
         case .parakeetTdtCtc110m:
             return "parakeet-tdt-ctc-110m"
+        case .cohereTranscribe:
+            return "cohere-transcribe"
         default:
             return name.replacingOccurrences(of: "-coreml", with: "")
         }
@@ -623,6 +628,19 @@ public enum ModelNames {
         }
     }
 
+    /// Cohere Transcribe 03-2026 model names
+    public enum CohereTranscribe {
+        public static let audioEncoderFile = "cohere_audio_encoder.mlmodelc"
+        public static let decoderFile = "cohere_decoder.mlmodelc"
+        public static let lmHeadFile = "cohere_lm_head.mlmodelc"
+
+        public static let requiredModels: Set<String> = [
+            audioEncoderFile,
+            decoderFile,
+            lmHeadFile,
+        ]
+    }
+
     static func getRequiredModelNames(for repo: Repo, variant: String?) -> Set<String> {
         switch repo {
         case .vad:
@@ -671,6 +689,8 @@ public enum ModelNames {
             return ModelNames.Qwen3ASR.requiredModelsFull
         case .multilingualG2p:
             return ModelNames.MultilingualG2P.requiredModels
+        case .cohereTranscribe:
+            return ModelNames.CohereTranscribe.requiredModels
         }
     }
 }
