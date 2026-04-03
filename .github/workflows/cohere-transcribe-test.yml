@@ -41,7 +41,6 @@ jobs:
       - name: Generate Reference Mel
         run: |
           echo "Generating reference mel from Cohere's official processor..."
-          cd mobius/models/stt/cohere-transcribe-03-2026/coreml
 
           # Install dependencies
           pip3 install transformers librosa numpy huggingface-hub
