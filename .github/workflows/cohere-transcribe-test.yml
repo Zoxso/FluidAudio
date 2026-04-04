@@ -34,48 +34,40 @@ jobs:
           path: |
             .build
             ~/Library/Application Support/FluidAudio/Models/cohere-transcribe
+            ~/Library/Application Support/FluidAudio/Datasets/FLEURS/en_us/test
           key: ${{ runner.os }}-cohere-${{ hashFiles('Package.resolved', 'Sources/FluidAudio/ASR/Cohere/**') }}
 
       - name: Build
         run: swift build -c release
 
-      - name: Generate Test Audio
+      - name: Install ffmpeg
+        run: brew install ffmpeg || echo "ffmpeg already installed"
+
+      - name: Download FLEURS Test Audio
         run: |
-          # Create 5 seconds of simple audio (sine wave at 440 Hz)
-          swift -e '
-          import AVFoundation
-          import Foundation
+          echo "Downloading FLEURS English test sample..."
+          # Download a single English test file from FLEURS
+          .build/release/fluidaudiocli download --dataset fleurs-en_us --max-files 1 || true
 
-          let sampleRate = 16000.0
-          let duration = 5.0
-          let frequency = 440.0
-          let numSamples = Int(sampleRate * duration)
+          # Find the downloaded audio file
+          FLEURS_DIR="$HOME/Library/Application Support/FluidAudio/Datasets/FLEURS/en_us/test"
+          if [ -d "$FLEURS_DIR" ]; then
+            TEST_AUDIO=$(find "$FLEURS_DIR" -name "*.wav" -o -name "*.mp3" | head -1)
+            if [ -n "$TEST_AUDIO" ]; then
+              # Convert to 16kHz mono WAV
+              ffmpeg -i "$TEST_AUDIO" -ar 16000 -ac 1 test_audio.wav -y
+              echo "Using FLEURS audio: $(basename $TEST_AUDIO)"
+              ls -lh test_audio.wav
+            fi
+          fi
 
-          var samples = [Float](repeating: 0, count: numSamples)
-          for i in 0..<numSamples {
-              let t = Double(i) / sampleRate
-              samples[i] = Float(0.3 * sin(2.0 * .pi * frequency * t))
-          }
-
-          let format = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: sampleRate, channels: 1, interleaved: false)!
-          let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(numSamples))!
-          buffer.frameLength = buffer.frameCapacity
-
-          let channelData = buffer.floatChannelData![0]
-          for i in 0..<numSamples {
-              channelData[i] = samples[i]
-          }
-
-          let file = try! AVAudioFile(forWriting: URL(fileURLWithPath: "test_audio.wav"), settings: [
-              AVFormatIDKey: kAudioFormatLinearPCM,
-              AVSampleRateKey: sampleRate,
-              AVNumberOfChannelsKey: 1,
-              AVLinearPCMBitDepthKey: 32,
-              AVLinearPCMIsFloatKey: true
-          ])
-          try! file.write(from: buffer)
-          print("Generated test audio: test_audio.wav")
-          '
+          # Fallback: generate 10s audio if download failed
+          if [ ! -f test_audio.wav ]; then
+            echo "FLEURS download failed, generating 10s fallback audio..."
+            ffmpeg -f lavfi -i "sine=frequency=440:duration=10:sample_rate=16000" -ac 1 test_audio.wav -y
+            echo "Generated fallback audio"
+            ls -lh test_audio.wav
+          fi
 
       - name: Test Cohere Transcription
         id: transcribe_test
