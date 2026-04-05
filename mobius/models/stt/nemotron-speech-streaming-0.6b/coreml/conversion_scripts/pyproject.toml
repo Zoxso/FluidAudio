@@ -1,0 +1,16 @@
+[project]
+name = "nemotron-streaming-coreml-conversion"
+version = "0.1.0"
+description = "CoreML conversion scripts for Nemotron Speech Streaming 0.6B"
+requires-python = ">=3.10,<3.11"
+dependencies = [
+    "torch>=2.0.0",
+    "nemo_toolkit[asr]>=2.0.0",
+    "coremltools>=7.0",
+    "soundfile>=0.12.0",
+    "numpy>=1.24.0",
+    "typer>=0.9.0",
+]
+
+[tool.uv]
+dev-dependencies = []

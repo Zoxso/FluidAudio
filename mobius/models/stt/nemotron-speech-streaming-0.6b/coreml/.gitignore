@@ -1,0 +1,13 @@
+# Virtual environment
+.venv/
+
+# Large files - download separately
+datasets/
+nemotron_coreml/
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Lock file (regenerate with uv sync)
+uv.lock

@@ -1,0 +1,16 @@
+[project]
+name = "parakeet-eou-coreml"
+version = "0.1.0"
+description = "CoreML conversion for Parakeet Realtime EOU 120M model"
+readme = "README.md"
+requires-python = "==3.10.12"
+dependencies = [
+    "coremltools==9.0b1",
+    "nemo-toolkit==2.3.1",
+    "torch==2.7.0",
+    "numpy==1.26.4",
+    "soundfile==0.13.1",
+    "typer==0.16.0",
+    "omegaconf==2.3.0",
+    "huggingface-hub==0.33.1",
+]

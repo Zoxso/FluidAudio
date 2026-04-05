@@ -1,0 +1,21 @@
+[project]
+name = "coreml-conversion"
+version = "0.1.0"
+description = "Convert token classification models to Core ML packages"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "coremltools==8.3.0",
+    "numpy==2.3.4",
+    "torch==2.9.0",
+    "transformers==4.51.3",
+    "wtpsplit==2.1.6",
+    "typer",
+]
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+py-modules = ["convert", "conversion_utils", "main"]

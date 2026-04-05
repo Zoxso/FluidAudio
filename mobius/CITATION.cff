@@ -1,0 +1,20 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+title: "Fluid Inference - möbius"
+authors:
+  - family-names: "Fluid Inference"
+    email: "hello@fluidinference.com"
+type: software
+repository-code: "https://github.com/FluidInference/mobius"
+license: Apache 2.0
+abstract: "Platform of models and tools to run AI on mobile, embedded and edge devices."
+preferred-citation:
+  type: software
+  authors:
+    - family-names: "Fluid Inference"
+      email: "hello@fluidinference.com"
+  title: "möbius: AI across mobile, embedded and edge"
+  year: 2024
+  publisher: "GitHub"
+  journal: "GitHub repository"
+  howpublished: "https://github.com/FluidInference/mobius"
