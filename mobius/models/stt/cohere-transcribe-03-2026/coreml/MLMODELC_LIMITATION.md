@@ -190,7 +190,7 @@ mlmodel.save("f16/cohere_encoder.mlmodelc")
 - Conversion started successfully
 - Translated all 7643 MIL operations to Neural Network ops (100% complete)
 - Process killed with exit code 137 during final compilation step
-- Cause: Memory exhaustion (encoder is ~600MB, conversion exceeded available RAM on M3 Max)
+- Cause: Memory exhaustion (encoder is 1.9B params / 3.6GB FP16, conversion requires multiple copies in RAM)
 
 **Verdict:** Not feasible due to memory constraints. Encoder will stay as .mlpackage.
 
