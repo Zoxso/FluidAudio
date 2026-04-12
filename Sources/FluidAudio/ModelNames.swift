@@ -9,7 +9,6 @@ public enum Repo: String, CaseIterable, Sendable {
     case parakeetCtc06b = "FluidInference/parakeet-ctc-0.6b-coreml"
     case parakeetCtcZhCn = "FluidInference/parakeet-ctc-0.6b-zh-cn-coreml"
     case parakeetJa = "FluidInference/parakeet-ctc-0.6b-ja-coreml"  // Contains both CTC and TDT models
-    case parakeetTdtJa = "FluidInference/parakeet-tdt-0.6b-ja-coreml"  // Legacy: repo doesn't exist
     case parakeetEou160 = "FluidInference/parakeet-realtime-eou-120m-coreml/160ms"
     case parakeetEou320 = "FluidInference/parakeet-realtime-eou-120m-coreml/320ms"
     case parakeetEou1280 = "FluidInference/parakeet-realtime-eou-120m-coreml/1280ms"
@@ -44,8 +43,6 @@ public enum Repo: String, CaseIterable, Sendable {
             return "parakeet-ctc-0.6b-zh-cn-coreml"
         case .parakeetJa:
             return "parakeet-ctc-0.6b-ja-coreml"
-        case .parakeetTdtJa:
-            return "parakeet-tdt-0.6b-ja-coreml"
         case .parakeetEou160:
             return "parakeet-realtime-eou-120m-coreml/160ms"
         case .parakeetEou320:
@@ -160,8 +157,6 @@ public enum Repo: String, CaseIterable, Sendable {
             return "parakeet-ctc-zh-cn"
         case .parakeetJa:
             return "parakeet-ctc-ja"
-        case .parakeetTdtJa:
-            return "parakeet-tdt-ja"
         case .parakeetTdtCtc110m:
             return "parakeet-tdt-ctc-110m"
         default:
@@ -679,8 +674,6 @@ public enum ModelNames {
             return ModelNames.CTCZhCn.requiredModels
         case .parakeetJa:
             return ModelNames.CTCJa.requiredModels
-        case .parakeetTdtJa:
-            return ModelNames.TDTJa.requiredModels
         case .parakeetEou160, .parakeetEou320, .parakeetEou1280:
             return ModelNames.ParakeetEOU.requiredModels
         case .nemotronStreaming1120, .nemotronStreaming560, .nemotronStreaming160, .nemotronStreaming80:
