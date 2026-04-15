@@ -695,11 +695,13 @@ public final class LSEENDDiarizer: Diarizer {
             return nil
         }
 
-        let converter = _cachedConverter ?? {
-            let c = AudioConverter(sampleRate: Double(engine.targetSampleRate))
-            _cachedConverter = c
-            return c
-        }()
+        let converter =
+            _cachedConverter
+            ?? {
+                let c = AudioConverter(sampleRate: Double(engine.targetSampleRate))
+                _cachedConverter = c
+                return c
+            }()
         return try converter.resample(Array(samples), from: sourceSampleRate)
     }
 
