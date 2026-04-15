@@ -644,9 +644,12 @@ public final class LSEENDStreamingSession {
 
         let previewFullLogits: LSEENDMatrix
         if includePreview {
-            let previewState = try state.copy()
+            // flushTail does not mutate the passed-in state — it reassigns a local
+            // variable on each step, leaving self.state untouched. finalize() relies
+            // on this same guarantee. Skipping the former state.copy() eliminates
+            // 6 × cloneAlignedMultiArray per pushAudio call.
             let pending = totalFeatureFrames - emittedFrames
-            previewFullLogits = try flushTail(from: previewState, pendingFrames: pending)
+            previewFullLogits = try flushTail(from: state, pendingFrames: pending)
         } else {
             previewFullLogits = .empty(columns: engine.decodeMaxSpeakers)
         }

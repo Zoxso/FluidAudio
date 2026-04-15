@@ -71,11 +71,11 @@ public final class LSEENDDiarizer: Diarizer {
 
     private var _engine: LSEENDInferenceHelper?
     private var _session: LSEENDStreamingSession?
-    private var _melSpectrogram: AudioMelSpectrogram?
     private var _timeline: DiarizerTimeline
     private var _numFramesProcessed: Int = 0
     private var _timelineConfig: DiarizerTimelineConfig
     private var _visibleStartFrameOffset: Int = 0
+    private var _cachedConverter: AudioConverter?
 
     // Audio buffering
     private var pendingAudio: [Float] = []
@@ -154,12 +154,10 @@ public final class LSEENDDiarizer: Diarizer {
     /// - Parameter descriptor: Model descriptor specifying variant and file paths
     public func initialize(descriptor: LSEENDModelDescriptor) throws {
         let engine = try LSEENDInferenceHelper(descriptor: descriptor, computeUnits: computeUnits)
-        let melSpectrogram = Self.createMelSpectrogram(featureConfig: engine.featureConfig)
 
         lock.withLock {
             updateTimelineConfig(engine: engine)
             _engine = engine
-            _melSpectrogram = melSpectrogram
             _timeline = DiarizerTimeline(config: _timelineConfig)
             _session = nil
             resetBuffersLocked()
@@ -175,12 +173,9 @@ public final class LSEENDDiarizer: Diarizer {
 
     /// Initialize with a pre-loaded engine.
     public func initialize(engine: LSEENDInferenceHelper) {
-        let melSpectrogram = Self.createMelSpectrogram(featureConfig: engine.featureConfig)
-
         lock.withLock {
             updateTimelineConfig(engine: engine)
             _engine = engine
-            _melSpectrogram = melSpectrogram
             _timeline = DiarizerTimeline(config: _timelineConfig)
             _session = nil
             resetBuffersLocked()
@@ -270,7 +265,7 @@ public final class LSEENDDiarizer: Diarizer {
 
             if _session == nil {
                 _session = try engine.createSession(
-                    inputSampleRate: engine.targetSampleRate, melSpectrogram: _melSpectrogram!)
+                    inputSampleRate: engine.targetSampleRate)
             }
             guard let session = _session else {
                 return nil
@@ -292,9 +287,9 @@ public final class LSEENDDiarizer: Diarizer {
                 let numSpeakers = engine.metadata.realOutputDim
                 let result = DiarizerChunkResult(
                     startFrame: max(0, update.startFrame - _visibleStartFrameOffset),
-                    finalizedPredictions: flattenRowMajor(update.probabilities, numSpeakers: numSpeakers),
+                    finalizedPredictions: update.probabilities.values,
                     finalizedFrameCount: update.probabilities.rows,
-                    tentativePredictions: flattenRowMajor(update.previewProbabilities, numSpeakers: numSpeakers),
+                    tentativePredictions: update.previewProbabilities.values,
                     tentativeFrameCount: update.previewProbabilities.rows
                 )
                 _numFramesProcessed += result.finalizedFrameCount
@@ -409,8 +404,7 @@ public final class LSEENDDiarizer: Diarizer {
 
         // Lazily create session on first process call
         if _session == nil {
-            _session = try engine.createSession(
-                inputSampleRate: engine.targetSampleRate, melSpectrogram: _melSpectrogram!)
+            _session = try engine.createSession(inputSampleRate: engine.targetSampleRate)
         }
         guard let session = _session else { return nil }
 
@@ -426,9 +420,9 @@ public final class LSEENDDiarizer: Diarizer {
         let numSpeakers = engine.metadata.realOutputDim
         let result = DiarizerChunkResult(
             startFrame: max(0, update.startFrame - _visibleStartFrameOffset),
-            finalizedPredictions: flattenRowMajor(update.probabilities, numSpeakers: numSpeakers),
+            finalizedPredictions: update.probabilities.values,
             finalizedFrameCount: update.probabilities.rows,
-            tentativePredictions: flattenRowMajor(update.previewProbabilities, numSpeakers: numSpeakers),
+            tentativePredictions: update.previewProbabilities.values,
             tentativeFrameCount: update.previewProbabilities.rows
         )
 
@@ -563,7 +557,7 @@ public final class LSEENDDiarizer: Diarizer {
                 retainedSession
             } else {
                 try engine.createSession(
-                    inputSampleRate: engine.targetSampleRate, melSpectrogram: _melSpectrogram!)
+                    inputSampleRate: engine.targetSampleRate)
             }
         let numSpeakers = engine.metadata.realOutputDim
 
@@ -571,9 +565,9 @@ public final class LSEENDDiarizer: Diarizer {
         if let update = try session.pushAudio(normalized) {
             let chunk = DiarizerChunkResult(
                 startFrame: max(0, update.startFrame - _visibleStartFrameOffset),
-                finalizedPredictions: flattenRowMajor(update.probabilities, numSpeakers: numSpeakers),
+                finalizedPredictions: update.probabilities.values,
                 finalizedFrameCount: update.probabilities.rows,
-                tentativePredictions: flattenRowMajor(update.previewProbabilities, numSpeakers: numSpeakers),
+                tentativePredictions: update.previewProbabilities.values,
                 tentativeFrameCount: update.previewProbabilities.rows
             )
             _numFramesProcessed += chunk.finalizedFrameCount
@@ -586,7 +580,7 @@ public final class LSEENDDiarizer: Diarizer {
         if let finalUpdate = try session.finalize() {
             let chunk = DiarizerChunkResult(
                 startFrame: max(0, finalUpdate.startFrame - _visibleStartFrameOffset),
-                finalizedPredictions: flattenRowMajor(finalUpdate.probabilities, numSpeakers: numSpeakers),
+                finalizedPredictions: finalUpdate.probabilities.values,
                 finalizedFrameCount: finalUpdate.probabilities.rows,
                 tentativePredictions: [],
                 tentativeFrameCount: 0
@@ -623,7 +617,7 @@ public final class LSEENDDiarizer: Diarizer {
         lock.withLock {
             _engine = nil
             _session = nil
-            _melSpectrogram = nil
+            _cachedConverter = nil
             _timeline.reset()
             resetBuffersLocked()
             logger.info("LS-EEND resources cleaned up")
@@ -656,7 +650,7 @@ public final class LSEENDDiarizer: Diarizer {
             if let update = pushedUpdate {
                 let flushedResult = DiarizerChunkResult(
                     startFrame: _numFramesProcessed,
-                    finalizedPredictions: flattenRowMajor(update.probabilities, numSpeakers: numSpeakers),
+                    finalizedPredictions: update.probabilities.values,
                     finalizedFrameCount: update.probabilities.rows,
                     tentativePredictions: [],
                     tentativeFrameCount: 0
@@ -670,7 +664,7 @@ public final class LSEENDDiarizer: Diarizer {
         if let finalUpdate = try session.finalize() {
             let finalResult = DiarizerChunkResult(
                 startFrame: _numFramesProcessed,
-                finalizedPredictions: flattenRowMajor(finalUpdate.probabilities, numSpeakers: numSpeakers),
+                finalizedPredictions: finalUpdate.probabilities.values,
                 finalizedFrameCount: finalUpdate.probabilities.rows,
                 tentativePredictions: [],
                 tentativeFrameCount: 0
@@ -704,34 +698,14 @@ public final class LSEENDDiarizer: Diarizer {
             return nil
         }
 
-        return try AudioConverter(sampleRate: Double(engine.targetSampleRate))
-            .resample(Array(samples), from: sourceSampleRate)
-    }
-
-    /// Create a new mel spectrogram instance owned by this diarizer.
-    private static func createMelSpectrogram(featureConfig: LSEENDFeatureConfig) -> AudioMelSpectrogram {
-        AudioMelSpectrogram(
-            sampleRate: featureConfig.sampleRate,
-            nMels: featureConfig.nMels,
-            nFFT: featureConfig.nFFT,
-            hopLength: featureConfig.hopLength,
-            winLength: featureConfig.winLength,
-            preemph: 0,
-            padTo: 1,
-            logFloor: 1e-10,
-            logFloorMode: .clamped,
-            windowPeriodic: true
-        )
+        if _cachedConverter == nil {
+            _cachedConverter = AudioConverter(sampleRate: Double(engine.targetSampleRate))
+        }
+        return try _cachedConverter!.resample(Array(samples), from: sourceSampleRate)
     }
 
     private func updateTimelineConfig(engine: LSEENDInferenceHelper) {
         self._timelineConfig.numSpeakers = engine.metadata.realOutputDim
         self._timelineConfig.frameDurationSeconds = Float(1.0 / engine.modelFrameHz)
-    }
-
-    /// Convert an LSEENDMatrix to a flat [Float] in row-major layout.
-    private func flattenRowMajor(_ matrix: LSEENDMatrix, numSpeakers: Int) -> [Float] {
-        guard matrix.rows > 0, matrix.columns > 0 else { return [] }
-        return matrix.values
     }
 }
