@@ -636,7 +636,7 @@ public final class LSEENDDiarizer: Diarizer {
         lock.lock()
         defer { lock.unlock() }
 
-        guard let engine = _engine, let session = _session else { return nil }
+        guard let session = _session else { return nil }
         var lastResult: DiarizerChunkResult?
 
         // Flush pending audio first — clear unconditionally so failed audio isn't retained.
