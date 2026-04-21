@@ -146,6 +146,25 @@ public struct TTS {
         var cloneVoicePath: String? = nil
         var voiceFilePath: String? = nil
         var saveVoicePath: String? = nil
+        // CosyVoice3 Phase 1 parity harness args.
+        var cv3FixturePath: String? = nil
+        var cv3ModelsDir: String? = nil
+        var cv3ReferencePath: String? = nil
+        var cv3Seed: UInt64 = 42
+        var cv3CpuOnly: Bool = false
+        var cv3ReplayTokens: Bool = true
+        // CosyVoice3 Phase 2 tokenizer parity args.
+        var cv3TokenizerDir: String? = nil
+        var cv3TokenizerParityMode: Bool = false
+        // CosyVoice3 Phase 2 frontend parity args.
+        var cv3FrontendParityMode: Bool = false
+        var cv3EmbeddingsFile: String? = nil
+        var cv3TokFixturePath: String? = nil
+        // CosyVoice3 Phase 2 text-driven synthesis args.
+        var cv3TextMode: Bool = false
+        var cv3SpecialTokensFile: String? = nil
+        var cv3PromptAssetsPath: String? = nil
+        var cv3MaxNewTokens: Int? = nil
 
         var i = 0
         while i < arguments.count {
@@ -200,9 +219,79 @@ public struct TTS {
                         backend = .kokoro
                     case "pocket", "pockettts":
                         backend = .pocketTts
+                    case "cosyvoice3", "cosyvoice3-parity", "cv3":
+                        backend = .cosyvoice3
+                    case "cosyvoice3-tokenizer-parity", "cv3-tokenizer":
+                        backend = .cosyvoice3
+                        cv3TokenizerParityMode = true
+                    case "cosyvoice3-frontend-parity", "cv3-frontend":
+                        backend = .cosyvoice3
+                        cv3FrontendParityMode = true
+                    case "cosyvoice3-text", "cv3-text":
+                        backend = .cosyvoice3
+                        cv3TextMode = true
                     default:
                         logger.warning("Unknown backend '\(arguments[i + 1])'; using kokoro")
                     }
+                    i += 1
+                }
+            case "--fixture":
+                if i + 1 < arguments.count {
+                    cv3FixturePath = arguments[i + 1]
+                    i += 1
+                }
+            case "--models-dir":
+                if i + 1 < arguments.count {
+                    cv3ModelsDir = arguments[i + 1]
+                    i += 1
+                }
+            case "--reference":
+                if i + 1 < arguments.count {
+                    cv3ReferencePath = arguments[i + 1]
+                    i += 1
+                }
+            case "--seed":
+                if i + 1 < arguments.count {
+                    cv3Seed = UInt64(arguments[i + 1]) ?? 42
+                    i += 1
+                }
+            case "--cpu-only":
+                cv3CpuOnly = true
+            case "--no-replay":
+                cv3ReplayTokens = false
+            case "--tokenizer-dir":
+                if i + 1 < arguments.count {
+                    cv3TokenizerDir = arguments[i + 1]
+                    i += 1
+                }
+            case "--embeddings-file":
+                if i + 1 < arguments.count {
+                    cv3EmbeddingsFile = arguments[i + 1]
+                    i += 1
+                }
+            case "--tok-fixture":
+                if i + 1 < arguments.count {
+                    cv3TokFixturePath = arguments[i + 1]
+                    i += 1
+                }
+            case "--special-tokens-file":
+                if i + 1 < arguments.count {
+                    cv3SpecialTokensFile = arguments[i + 1]
+                    i += 1
+                }
+            case "--prompt-assets":
+                if i + 1 < arguments.count {
+                    cv3PromptAssetsPath = arguments[i + 1]
+                    i += 1
+                }
+            case "--text":
+                if i + 1 < arguments.count {
+                    text = arguments[i + 1]
+                    i += 1
+                }
+            case "--max-new-tokens":
+                if i + 1 < arguments.count {
+                    cv3MaxNewTokens = Int(arguments[i + 1])
                     i += 1
                 }
             case "--auto-download":
@@ -246,6 +335,84 @@ public struct TTS {
                 chunkDirectory: chunkDirectory,
                 variantPreference: variantPreference
             )
+            return
+        }
+
+        if backend == .cosyvoice3 && cv3TokenizerParityMode {
+            guard let tokDir = cv3TokenizerDir, let fixture = cv3FixturePath else {
+                logger.error(
+                    "cosyvoice3-tokenizer-parity requires --tokenizer-dir <.../CosyVoice-BlankEN> and --fixture <tokenizer_fixture.json>"
+                )
+                return
+            }
+            await CosyVoice3TokenizerParityCLI.run(
+                tokenizerDir: tokDir, fixturePath: fixture)
+            return
+        }
+
+        if backend == .cosyvoice3 && cv3FrontendParityMode {
+            guard
+                let tokDir = cv3TokenizerDir,
+                let embFile = cv3EmbeddingsFile,
+                let fixture = cv3FixturePath,
+                let tokFix = cv3TokFixturePath
+            else {
+                logger.error(
+                    "cosyvoice3-frontend-parity requires --tokenizer-dir, --embeddings-file, --fixture <shipping.safetensors>, --tok-fixture"
+                )
+                return
+            }
+            await CosyVoice3FrontendParityCLI.run(
+                tokenizerDir: tokDir,
+                embeddingsFile: embFile,
+                fixturePath: fixture,
+                tokFixturePath: tokFix)
+            return
+        }
+
+        if backend == .cosyvoice3 && cv3TextMode {
+            guard
+                let inputText = text,
+                let modelsDir = cv3ModelsDir,
+                let tokDir = cv3TokenizerDir,
+                let embFile = cv3EmbeddingsFile,
+                let specFile = cv3SpecialTokensFile,
+                let promptAssets = cv3PromptAssetsPath
+            else {
+                logger.error(
+                    "cosyvoice3-text requires --text <text>, --models-dir, --tokenizer-dir, --embeddings-file, --special-tokens-file, --prompt-assets"
+                )
+                return
+            }
+            await CosyVoice3TextCLI.run(
+                text: inputText,
+                modelsDir: modelsDir,
+                tokenizerDir: tokDir,
+                embeddingsFile: embFile,
+                specialTokensFile: specFile,
+                promptAssetsPath: promptAssets,
+                outputPath: output,
+                seed: cv3Seed,
+                maxNewTokens: cv3MaxNewTokens,
+                cpuOnly: cv3CpuOnly)
+            return
+        }
+
+        if backend == .cosyvoice3 {
+            guard let fixture = cv3FixturePath, let modelsDir = cv3ModelsDir else {
+                logger.error(
+                    "cosyvoice3-parity requires --fixture <shipping.safetensors> and --models-dir <build/>"
+                )
+                return
+            }
+            await CosyVoice3ParityCLI.run(
+                fixturePath: fixture,
+                modelsDir: modelsDir,
+                referencePath: cv3ReferencePath,
+                outputPath: output,
+                seed: cv3Seed,
+                cpuOnly: cv3CpuOnly,
+                replayTokens: cv3ReplayTokens)
             return
         }
 

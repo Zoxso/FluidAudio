@@ -25,6 +25,7 @@ public enum Repo: String, CaseIterable, Sendable {
     case qwen3AsrInt8 = "FluidInference/qwen3-asr-0.6b-coreml/int8"
     case multilingualG2p = "FluidInference/charsiu-g2p-byt5-coreml"
     case parakeetTdtCtc110m = "FluidInference/parakeet-tdt-ctc-110m-coreml"
+    case cosyvoice3 = "FluidInference/CosyVoice3-0.5B-coreml"
 
     /// Repository slug (without owner)
     public var name: String {
@@ -75,6 +76,8 @@ public enum Repo: String, CaseIterable, Sendable {
             return "charsiu-g2p-byt5-coreml"
         case .parakeetTdtCtc110m:
             return "parakeet-tdt-ctc-110m-coreml"
+        case .cosyvoice3:
+            return "CosyVoice3-0.5B-coreml"
         }
     }
 
@@ -159,6 +162,8 @@ public enum Repo: String, CaseIterable, Sendable {
             return "parakeet-ja"
         case .parakeetTdtCtc110m:
             return "parakeet-tdt-ctc-110m"
+        case .cosyvoice3:
+            return "cosyvoice3"
         default:
             return name.replacingOccurrences(of: "-coreml", with: "")
         }
@@ -560,6 +565,47 @@ public enum ModelNames {
         ]
     }
 
+    /// CosyVoice3 (Mandarin) model names. Files live on HuggingFace at
+    /// `FluidInference/CosyVoice3-0.5B-coreml` (see `Repo.cosyvoice3`). The
+    /// expected local directory layout is encoded in `CosyVoice3Constants.Files`.
+    public enum CosyVoice3 {
+        public static let llmPrefill = "LLM-Prefill-T256-M768-fp16"
+        public static let llmDecode = "LLM-Decode-M768-fp16"
+        public static let flow = "Flow-N250-fp32"
+        public static let hift = "HiFT-T500-fp16"
+        public static let speechEmbeddings = "speech_embedding-fp16.safetensors"
+
+        public static let llmPrefillFile = llmPrefill + ".mlmodelc"
+        public static let llmDecodeFile = llmDecode + ".mlmodelc"
+        public static let flowFile = flow + ".mlmodelc"
+        public static let hiftFile = hift + ".mlmodelc"
+
+        public static let requiredModels: Set<String> = [
+            llmPrefillFile,
+            llmDecodeFile,
+            flowFile,
+            hiftFile,
+        ]
+
+        /// Sidecar assets living under subdirectories of the HF repo (not part
+        /// of `requiredModels`; pulled via `downloadSubdirectory` / direct file
+        /// fetch by `CosyVoice3ResourceDownloader`).
+        public enum Sidecar {
+            public static let embeddingsDir = "embeddings"
+            public static let tokenizerDir = "tokenizer"
+            public static let voicesDir = "voices"
+
+            public static let speechEmbeddings = "speech_embedding-fp16.safetensors"
+            public static let runtimeEmbeddings = "embeddings-runtime-fp32.safetensors"
+            public static let specialTokens = "special_tokens.json"
+            public static let vocab = "vocab.json"
+            public static let merges = "merges.txt"
+            public static let tokenizerConfig = "tokenizer_config.json"
+
+            public static let defaultVoiceId = "cosyvoice3-default-zh"
+        }
+    }
+
     /// Multilingual G2P (CharsiuG2P ByT5) model names
     public enum MultilingualG2P {
         public static let encoder = "MultilingualG2PEncoder"
@@ -688,6 +734,8 @@ public enum ModelNames {
             return ModelNames.Qwen3ASR.requiredModelsFull
         case .multilingualG2p:
             return ModelNames.MultilingualG2P.requiredModels
+        case .cosyvoice3:
+            return ModelNames.CosyVoice3.requiredModels
         }
     }
 }

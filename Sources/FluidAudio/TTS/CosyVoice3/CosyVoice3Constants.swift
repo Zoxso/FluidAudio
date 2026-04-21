@@ -1,0 +1,62 @@
+import Foundation
+
+/// Central constants for the CosyVoice3 (Mandarin) CoreML pipeline.
+///
+/// Shipping config (frozen):
+/// - LLM-Prefill-T256-M768-fp16
+/// - LLM-Decode-M768-fp16
+/// - Flow-N250-fp32 (fp16 causes NaN; fused `layer_norm` cannot be pinned)
+/// - HiFT-T500-fp16
+public enum CosyVoice3Constants {
+
+    // MARK: - LLM shapes
+    public static let prefillLength = 256
+    public static let kvMaxLength = 768
+    public static let embedDim = 896
+    public static let numLayers = 24
+    public static let kvHeads = 2
+    public static let headDim = 64
+
+    // MARK: - Flow / HiFT shapes
+    public static let flowTotalTokens = 250
+    public static let tokenMelRatio = 2
+    public static let hiftMaxFrames = 500
+    public static let hiftSamplesPerFrame = 480
+    public static let sampleRate = 24_000
+    public static let melBins = 80
+    public static let speakerEmbeddingDim = 192
+
+    // MARK: - Speech token vocab
+    public static let speechVocab = 6_761
+    public static let speechTokenSize = 6_561
+    public static let sosId: Int32 = 6_561
+    public static let eosId: Int32 = 6_562
+    public static let taskId: Int32 = 6_563
+    /// Any token id in this range is treated as a stop signal.
+    public static let stopRange: ClosedRange<Int32> = 6_561...6_760
+
+    // MARK: - Sampler
+    public static let topP: Float = 0.8
+    public static let topK: Int = 25
+    public static let rasWindow: Int = 10
+    public static let rasTauR: Float = 0.1
+
+    // MARK: - Cache layout
+    /// Subdirectory under the shared `~/.cache/fluidaudio/` (or iOS Caches) dir
+    /// where every TTS backend stores its HF-mirrored models.
+    public static let defaultModelsSubdirectory = "Models"
+
+    // MARK: - Files (local build dir layout)
+    public enum Files {
+        public static let llmPrefill = "LLM-Prefill-T256-M768-fp16.mlpackage"
+        public static let llmPrefillSubdir = "llm-fp16"
+        public static let llmDecode = "LLM-Decode-M768-fp16.mlpackage"
+        public static let llmDecodeSubdir = "llm-fp16"
+        public static let flow = "Flow-N250-fp32.mlpackage"
+        public static let flowSubdir = "flow-fp32-n250"
+        public static let hift = "HiFT-T500-fp16.mlpackage"
+        public static let hiftSubdir = "hift-fp16-t500"
+        public static let speechEmbeddings = "speech_embedding-fp16.safetensors"
+        public static let speechEmbeddingsSubdir = "embeddings"
+    }
+}

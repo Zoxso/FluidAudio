@@ -6,4 +6,6 @@ public enum TtsBackend: Sendable {
     case kokoro
     /// PocketTTS — flow-matching language model, autoregressive streaming synthesis.
     case pocketTts
+    /// CosyVoice3 — Mandarin zero-shot voice cloning via Qwen2 LM + Flow CFM + HiFT.
+    case cosyvoice3
 }
