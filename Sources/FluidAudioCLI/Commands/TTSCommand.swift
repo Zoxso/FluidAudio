@@ -165,6 +165,8 @@ public struct TTS {
         var cv3SpecialTokensFile: String? = nil
         var cv3PromptAssetsPath: String? = nil
         var cv3MaxNewTokens: Int? = nil
+        // CosyVoice3 eager HF-download mode.
+        var cv3DownloadMode: Bool = false
 
         var i = 0
         while i < arguments.count {
@@ -230,6 +232,9 @@ public struct TTS {
                     case "cosyvoice3-text", "cv3-text":
                         backend = .cosyvoice3
                         cv3TextMode = true
+                    case "cosyvoice3-download", "cv3-download":
+                        backend = .cosyvoice3
+                        cv3DownloadMode = true
                     default:
                         logger.warning("Unknown backend '\(arguments[i + 1])'; using kokoro")
                     }
@@ -335,6 +340,11 @@ public struct TTS {
                 chunkDirectory: chunkDirectory,
                 variantPreference: variantPreference
             )
+            return
+        }
+
+        if backend == .cosyvoice3 && cv3DownloadMode {
+            await CosyVoice3DownloadCLI.run()
             return
         }
 
