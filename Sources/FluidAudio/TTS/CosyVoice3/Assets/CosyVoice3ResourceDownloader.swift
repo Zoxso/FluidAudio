@@ -9,7 +9,7 @@ import Foundation
 /// <repoDirectory>/
 /// ├── LLM-Prefill-T256-M768-fp16.mlmodelc/
 /// ├── LLM-Decode-M768-fp16.mlmodelc/
-/// ├── Flow-N250-fp32.mlmodelc/
+/// ├── Flow-N250-fp16.mlmodelc/
 /// ├── HiFT-T500-fp16.mlmodelc/
 /// ├── embeddings/
 /// │   ├── speech_embedding-fp16.safetensors

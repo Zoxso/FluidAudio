@@ -11,7 +11,7 @@ import Foundation
 ///
 /// 2. **Local mobius build dir**: `<dir>/<subdir>/<ModelName>.mlpackage` as
 ///    emitted by `models/tts/cosyvoice3/coreml/convert-coreml.py` (with
-///    `llm-fp16/`, `flow-fp32-n250/`, `hift-fp16-t500/` subdirs).
+///    `llm-fp16/`, `flow-fp16-n250/`, `hift-fp16-t500/` subdirs).
 ///
 /// The store probes layout (1) first, then falls back to (2). CoreML
 /// auto-compiles `.mlpackage` on first load and caches the compiled bundle on
@@ -28,9 +28,10 @@ public actor CosyVoice3ModelStore {
 
     /// - Parameters:
     ///   - directory: Base build directory that contains
-    ///     `llm-fp16/`, `flow-fp32-n250/`, `hift-fp16-t500/`, `embeddings/`.
-    ///   - computeUnits: Defaults to `.cpuAndNeuralEngine`. Tests force
-    ///     `.cpuOnly` for tight tolerance parity against the Python reference.
+    ///     `llm-fp16/`, `flow-fp16-n250/`, `hift-fp16-t500/`, `embeddings/`.
+    ///   - computeUnits: Defaults to `.cpuAndNeuralEngine`. Applied to LLM +
+    ///     HiFT models. Flow always runs on `.cpuAndGPU` regardless (see
+    ///     `loadIfNeeded()` for why).
     public init(directory: URL, computeUnits: MLComputeUnits = .cpuAndNeuralEngine) {
         self.directory = directory
         self.computeUnits = computeUnits
@@ -68,12 +69,16 @@ public actor CosyVoice3ModelStore {
         let decode = try await compileAndLoad(decodeURL, configuration: config)
         logger.info("Loaded \(CosyVoice3Constants.Files.llmDecode)")
 
-        // Flow is fp32; ANE cannot run the full graph. If the caller asked for
-        // CPU-only (parity harness), honor it so results match the Python
-        // reference byte-for-byte. Otherwise use CPU+GPU to avoid silent ANE
-        // fallback warnings.
+        // Flow is fp16 and MUST run on `.cpuAndGPU`:
+        //   - pure CPU overflows the fused LayerNorm and emits all-NaN mel
+        //     (empirically 5/5 NaN across random inputs)
+        //   - ANE refuses to compile the graph (MILCompilerForANE
+        //     `ANECCompile() FAILED`), so `.cpuAndNE` / `.all` deadlock load
+        //   - GPU path uses fp32 accumulators internally and is stable
+        // Ignore the user-supplied `computeUnits` for Flow; apply it to the
+        // LLM + HiFT models only.
         let flowConfig = MLModelConfiguration()
-        flowConfig.computeUnits = (computeUnits == .cpuOnly) ? .cpuOnly : .cpuAndGPU
+        flowConfig.computeUnits = .cpuAndGPU
         let flow = try await compileAndLoad(flowURL, configuration: flowConfig)
         logger.info("Loaded \(CosyVoice3Constants.Files.flow)")
 

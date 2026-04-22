@@ -3,10 +3,13 @@ import Foundation
 /// Central constants for the CosyVoice3 (Mandarin) CoreML pipeline.
 ///
 /// Shipping config (frozen):
-/// - LLM-Prefill-T256-M768-fp16
-/// - LLM-Decode-M768-fp16
-/// - Flow-N250-fp32 (fp16 causes NaN; fused `layer_norm` cannot be pinned)
-/// - HiFT-T500-fp16
+/// - LLM-Prefill-T256-M768-fp16     (cpuAndNeuralEngine)
+/// - LLM-Decode-M768-fp16           (cpuAndNeuralEngine)
+/// - Flow-N250-fp16                 (cpuAndGPU — pure CPU overflows fused
+///   LayerNorm → NaN; ANE refuses to compile; GPU path uses fp32 accumulators
+///   internally and is stable + ~3× faster than the previous fp32/cpuOnly
+///   shipping config)
+/// - HiFT-T500-fp16                 (cpuAndNeuralEngine)
 public enum CosyVoice3Constants {
 
     // MARK: - LLM shapes
@@ -52,8 +55,8 @@ public enum CosyVoice3Constants {
         public static let llmPrefillSubdir = "llm-fp16"
         public static let llmDecode = "LLM-Decode-M768-fp16.mlpackage"
         public static let llmDecodeSubdir = "llm-fp16"
-        public static let flow = "Flow-N250-fp32.mlpackage"
-        public static let flowSubdir = "flow-fp32-n250"
+        public static let flow = "Flow-N250-fp16.mlpackage"
+        public static let flowSubdir = "flow-fp16-n250"
         public static let hift = "HiFT-T500-fp16.mlpackage"
         public static let hiftSubdir = "hift-fp16-t500"
         public static let speechEmbeddings = "speech_embedding-fp16.safetensors"
