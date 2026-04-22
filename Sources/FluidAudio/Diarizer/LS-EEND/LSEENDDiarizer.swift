@@ -25,10 +25,16 @@ public final class LSEENDDiarizer: Diarizer {
     // MARK: - Protocol properties
 
     public private(set) var isAvailable: Bool = false
-    public private(set) var numFramesProcessed: Int = 0
-    public let targetSampleRate: Int?
-    public let modelFrameHz: Double?
-    public let numSpeakers: Int?
+    /// Number of finalized output frames emitted to the timeline.
+    /// Tracks `timeline.numFinalizedFrames` (warmup frames stripped by
+    /// the model are excluded), matching the `Diarizer` protocol contract.
+    public var numFramesProcessed: Int { timeline.numFinalizedFrames }
+    /// Input frames fed to the model (including warmup). Used internally
+    /// to drive the per-chunk warmup calculation.
+    private var framesFedToModel: Int = 0
+    public private(set) var targetSampleRate: Int?
+    public private(set) var modelFrameHz: Double?
+    public private(set) var numSpeakers: Int?
 
     private var finalized: Bool = false
 
@@ -37,17 +43,34 @@ public final class LSEENDDiarizer: Diarizer {
     // MARK: - Init
 
     public init(model: LSEENDModel) throws {
-        self.model = model
         let metadata = model.metadata
+        self.model = model
         self.session = try LSEENDFeatureProvider(from: metadata)
-
         self.timeline = DiarizerTimeline(
             config: .default(
                 numSpeakers: metadata.maxSpeakers,
                 frameDurationSeconds: metadata.frameDurationSeconds
             )
         )
+        self.targetSampleRate = metadata.sampleRate
+        self.modelFrameHz = Double(metadata.sampleRate) / Double(metadata.hopLength * metadata.subsampling)
+        self.numSpeakers = metadata.maxSpeakers
+        self.isAvailable = true
+    }
 
+    /// Replace model + timeline + derived metadata. Used by init and hot-swap
+    /// paths so every metadata-derived property stays in lockstep with the
+    /// currently loaded model.
+    private func adopt(model: LSEENDModel) throws {
+        let metadata = model.metadata
+        self.model = model
+        self.session = try LSEENDFeatureProvider(from: metadata)
+        self.timeline = DiarizerTimeline(
+            config: .default(
+                numSpeakers: metadata.maxSpeakers,
+                frameDurationSeconds: metadata.frameDurationSeconds
+            )
+        )
         self.targetSampleRate = metadata.sampleRate
         self.modelFrameHz = Double(metadata.sampleRate) / Double(metadata.hopLength * metadata.subsampling)
         self.numSpeakers = metadata.maxSpeakers
@@ -68,11 +91,10 @@ public final class LSEENDDiarizer: Diarizer {
             computeUnits: computeUnits,
             progressHandler: progressHandler
         )
-        self.model = model
-        self.session = try LSEENDFeatureProvider(from: model.metadata)
-        // Re-seed warmup counter + clear any prior streaming state — the
-        // new model may have a different `convDelay`, so leaving stale
-        // state around would mis-trim the first chunk after hot-swap.
+        // New model may have different convDelay / maxSpeakers / sampleRate,
+        // so rebuild session + timeline + derived metadata and clear any
+        // prior streaming state before the next chunk runs.
+        try adopt(model: model)
         resetStreamingState()
     }
 
@@ -219,8 +241,8 @@ public final class LSEENDDiarizer: Diarizer {
 
         while let input = try session.emitNextChunk() {
             if recordFrames {
-                input.warmupFrames = max(min(rightContext - numFramesProcessed, chunkSize), 0)
-                numFramesProcessed += chunkSize
+                input.warmupFrames = max(min(rightContext - framesFedToModel, chunkSize), 0)
+                framesFedToModel += chunkSize
             }
             newPreds.append(contentsOf: try model.predict(from: input))
             processed += 1
@@ -337,7 +359,7 @@ public final class LSEENDDiarizer: Diarizer {
 
     private func resetStreamingState() {
         session?.reset()
-        numFramesProcessed = 0
+        framesFedToModel = 0
         finalized = false
     }
 

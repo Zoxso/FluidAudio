@@ -418,9 +418,9 @@ public class DiarizerSpeaker: Identifiable {
     /// - Returns: The popped segment
     @discardableResult
     public func popLast(
-        if predictate: @Sendable (DiarizerSegment) throws -> Bool
+        if predicate: @Sendable (DiarizerSegment) throws -> Bool
     ) rethrows -> DiarizerSegment? {
-        guard let last = lastSegment, try predictate(last) else {
+        guard let last = lastSegment, try predicate(last) else {
             return nil
         }
         return tentativeSegments.popLast() ?? finalizedSegments.popLast()
@@ -951,7 +951,7 @@ public class DiarizerTimeline {
         _ speaker: DiarizerSpeaker,
         atIndex index: Int? = nil,
         transferCurrentSegment: Bool = true
-    ) async -> DiarizerSpeaker? {
+    ) -> DiarizerSpeaker? {
         // Ensure index is within bounds
         let index = index ?? (0..<speakerCapacity).first { speakers[$0] == nil }
 
