@@ -5,7 +5,7 @@ import XCTest
 
 @testable import FluidAudio
 
-final class LSEENDFeatureProvider: XCTestCase {
+final class LSEENDFeatureProviderTests: XCTestCase {
 
     func testFeatureProviderRequiresExactMinimumAudioForFirstChunk() throws {
         let metadata = makeMetadata()

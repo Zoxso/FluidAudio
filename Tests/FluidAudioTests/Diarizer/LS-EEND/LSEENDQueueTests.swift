@@ -2,7 +2,7 @@ import XCTest
 
 @testable import FluidAudio
 
-final class LSEENDMatrixTests: XCTestCase {
+final class LSEENDQueueTests: XCTestCase {
 
     func testStreamingChunkQueueRequiresExactMinimumElementsForFirstChunk() {
         var queue = StreamingChunkQueue(
