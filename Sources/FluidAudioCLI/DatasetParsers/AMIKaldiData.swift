@@ -30,11 +30,11 @@ enum AMIKaldiData {
             switch self {
             case .annotationsNotFound:
                 return "AMI annotations were not found. Expected Datasets/ami_public_1.6.2."
-            case let .missingAudio(meetingId):
+            case .missingAudio(let meetingId):
                 return "AMI Kaldi data has no audio entry for \(meetingId)."
-            case let .missingReference(meetingId):
+            case .missingReference(let meetingId):
                 return "AMI Kaldi data has no reference segments for \(meetingId)."
-            case let .invalidKaldiData(message):
+            case .invalidKaldiData(let message):
                 return message
             }
         }
@@ -53,7 +53,8 @@ enum AMIKaldiData {
         workingDirectory: URL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath),
         fileManager: FileManager = .default
     ) -> Bool {
-        splitExists(splitDirectory: splitDirectory(split: split, workingDirectory: workingDirectory), fileManager: fileManager)
+        splitExists(
+            splitDirectory: splitDirectory(split: split, workingDirectory: workingDirectory), fileManager: fileManager)
     }
 
     static func ensureSplitExists(
@@ -68,10 +69,12 @@ enum AMIKaldiData {
             return
         }
 
-        guard let annotationsRoot = findAnnotationsRoot(
-            workingDirectory: workingDirectory,
-            fileManager: fileManager
-        ) else {
+        guard
+            let annotationsRoot = findAnnotationsRoot(
+                workingDirectory: workingDirectory,
+                fileManager: fileManager
+            )
+        else {
             throw Error.annotationsNotFound
         }
 

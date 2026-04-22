@@ -21,7 +21,6 @@
 //  midpoint lies within ±collar/2 of any boundary in the reference is
 //  dropped from every accumulator (matches pyannote.metrics).
 
-
 import Foundation
 
 public struct DERSpeakerSegment: Sendable, Hashable {
@@ -29,7 +28,9 @@ public struct DERSpeakerSegment: Sendable, Hashable {
     public let start: Double
     public let end: Double
     public init(speaker: String, start: Double, end: Double) {
-        self.speaker = speaker; self.start = start; self.end = end
+        self.speaker = speaker
+        self.start = start
+        self.end = end
     }
 }
 
@@ -79,22 +80,27 @@ public enum DiarizationDER {
         }
         let numFrames = Int(ceil(maxEnd / frameStep)) + 1
         if numFrames <= 0 || (refLabels.isEmpty && hypLabels.isEmpty) {
-            return DERResult(der: 0, confusion: 0, falseAlarm: 0,
-                             miss: 0, totalRefSpeech: 0, mapping: [:])
+            return DERResult(
+                der: 0, confusion: 0, falseAlarm: 0,
+                miss: 0, totalRefSpeech: 0, mapping: [:])
         }
 
         // Rasterise each label to a BitSet per frame.
-        let refMask = rasterise(ref, labelIdx: refIdx, numLabels: refLabels.count,
-                                numFrames: numFrames, frameStep: frameStep)
-        let hypMask = rasterise(hyp, labelIdx: hypIdx, numLabels: hypLabels.count,
-                                numFrames: numFrames, frameStep: frameStep)
+        let refMask = rasterise(
+            ref, labelIdx: refIdx, numLabels: refLabels.count,
+            numFrames: numFrames, frameStep: frameStep)
+        let hypMask = rasterise(
+            hyp, labelIdx: hypIdx, numLabels: hypLabels.count,
+            numFrames: numFrames, frameStep: frameStep)
 
         // Overlap matrix O[h][r] = #frames both active.
-        let H = hypLabels.count, R = refLabels.count
+        let H = hypLabels.count
+        let R = refLabels.count
         var overlap = [Int](repeating: 0, count: H * R)
         if H > 0 && R > 0 {
             for t in 0..<numFrames {
-                let hRow = t * H, rRow = t * R
+                let hRow = t * H
+                let rRow = t * R
                 for h in 0..<H where hypMask[hRow + h] {
                     for r in 0..<R where refMask[rRow + r] {
                         overlap[h * R + r] &+= 1
@@ -130,9 +136,13 @@ public enum DiarizationDER {
             ref: ref, numFrames: numFrames, frameStep: frameStep, collar: collar)
 
         // Frame-wise error accumulation under the global mapping.
-        var sumMiss = 0, sumFA = 0, sumConf = 0, sumRef = 0
+        var sumMiss = 0
+        var sumFA = 0
+        var sumConf = 0
+        var sumRef = 0
         for t in 0..<numFrames where scorable[t] {
-            let hRow = t * H, rRow = t * R
+            let hRow = t * H
+            let rRow = t * R
             var nRef = 0
             for r in 0..<R where refMask[rRow + r] { nRef += 1 }
             var nSys = 0
@@ -143,14 +153,14 @@ public enum DiarizationDER {
                 if rm >= 0 && refMask[rRow + rm] { nCorrect += 1 }
             }
             sumMiss += max(0, nRef - nSys)
-            sumFA   += max(0, nSys - nRef)
+            sumFA += max(0, nSys - nRef)
             sumConf += min(nRef, nSys) - nCorrect
-            sumRef  += nRef
+            sumRef += nRef
         }
         let missS = Double(sumMiss) * frameStep
-        let faS   = Double(sumFA)   * frameStep
+        let faS = Double(sumFA) * frameStep
         let confS = Double(sumConf) * frameStep
-        let refS  = Double(sumRef)  * frameStep
+        let refS = Double(sumRef) * frameStep
         let der = refS > 0 ? (missS + faS + confS) / refS : 0
 
         var mapOut: [String: String] = [:]
@@ -248,12 +258,22 @@ fileprivate enum Hungarian {
                 var j1 = 0
                 for j in 1...n where !used[j] {
                     let cur = cost[(i0 - 1) * n + (j - 1)] - u[i0] - v[j]
-                    if cur < minv[j] { minv[j] = cur; way[j] = j0 }
-                    if minv[j] < delta { delta = minv[j]; j1 = j }
+                    if cur < minv[j] {
+                        minv[j] = cur
+                        way[j] = j0
+                    }
+                    if minv[j] < delta {
+                        delta = minv[j]
+                        j1 = j
+                    }
                 }
                 for j in 0...n {
-                    if used[j] { u[p[j]] += delta; v[j] -= delta }
-                    else { minv[j] -= delta }
+                    if used[j] {
+                        u[p[j]] += delta
+                        v[j] -= delta
+                    } else {
+                        minv[j] -= delta
+                    }
                 }
                 j0 = j1
             } while p[j0] != 0

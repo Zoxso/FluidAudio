@@ -12,7 +12,8 @@ final class AMIRTTMTests: XCTestCase {
         let workingDir = root.appendingPathComponent("workspace", isDirectory: true)
         let cachedRTTM = homeDir.appendingPathComponent("FluidAudioDatasets/ami_official/rttm/ES2004a.rttm")
 
-        try FileManager.default.createDirectory(at: cachedRTTM.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(
+            at: cachedRTTM.deletingLastPathComponent(), withIntermediateDirectories: true)
         try "SPEAKER ES2004a 1 0.00 1.00 <NA> <NA> speaker0 <NA> <NA>\n".write(
             to: cachedRTTM,
             atomically: true,
@@ -34,7 +35,8 @@ final class AMIRTTMTests: XCTestCase {
         let destinationDir = root.appendingPathComponent("cache/rttm", isDirectory: true)
         let sourceRTTM = sourceRoot.appendingPathComponent("test/ES2004a.rttm")
 
-        try FileManager.default.createDirectory(at: sourceRTTM.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(
+            at: sourceRTTM.deletingLastPathComponent(), withIntermediateDirectories: true)
         let expectedContents = "SPEAKER ES2004a 1 0.00 1.00 <NA> <NA> speaker0 <NA> <NA>\n"
         try expectedContents.write(to: sourceRTTM, atomically: true, encoding: .utf8)
 

@@ -484,8 +484,11 @@ private final class DummyUnavailableLSEENDDiarizer: Diarizer {
 
     func addAudio<C>(_ samples: C, sourceSampleRate: Double?) throws where C: Collection, C.Element == Float {}
     func process() throws -> DiarizerTimelineUpdate? { nil }
-    func process<C>(samples: C, sourceSampleRate: Double?) throws -> DiarizerTimelineUpdate? where C: Collection,
-        C.Element == Float { nil }
+    func process<C>(samples: C, sourceSampleRate: Double?) throws -> DiarizerTimelineUpdate?
+    where
+        C: Collection,
+        C.Element == Float
+    { nil }
     func processComplete<C>(
         _ samples: C,
         sourceSampleRate: Double?,

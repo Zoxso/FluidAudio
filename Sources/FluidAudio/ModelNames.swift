@@ -491,7 +491,7 @@ public enum ModelNames {
                 case .dihard3: return .lseendDihard3
                 }
             }
-            
+
             public var name: String {
                 switch self {
                 case .ami:
@@ -504,25 +504,25 @@ public enum ModelNames {
                     return "ls_eend_dih3"
                 }
             }
-            
+
             public var description: String { name }
-            
+
             public func name(forStep step: StepSize) -> String {
                 "\(name)_\(step)"
             }
-            
+
             public func fileName(forStep step: StepSize) -> String {
                 "\(step)/\(name)_\(step).mlmodelc"
             }
         }
-        
+
         public enum StepSize: Int, CaseIterable, Sendable, CustomStringConvertible {
             case step100ms = 1
             case step200ms = 2
             case step300ms = 3
             case step400ms = 4
             case step500ms = 5
-            
+
             public var description: String {
                 switch self {
                 case .step100ms: return "100ms"

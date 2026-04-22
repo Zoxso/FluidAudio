@@ -10,37 +10,37 @@ public typealias LSEENDStepSize = ModelNames.LSEEND.StepSize
 public struct LSEENDMetadata: Codable {
     /// Number of output frames to process per model call
     public let chunkSize: Int
-    
+
     /// Duration of output frames in seconds
     public let frameDurationSeconds: Float
-    
+
     /// Max output speakers
     public let maxSpeakers: Int
-    
+
     /// Required audio sample rate
     public let sampleRate: Int
-    
+
     /// Number of attractors. Not output speakers
     public let maxNspks: Int
-    
+
     /// Mel hop length
     public let hopLength: Int
-    
+
     /// Mel window length
     public let winLength: Int
-    
+
     /// Number of mel features
     public let nMels: Int
-    
+
     /// Number of mel context frames per output frame
     public let contextSize: Int
-    
+
     /// Mel -> prediction subsampling
     public let subsampling: Int
-    
+
     /// Number of right context output frames
     public let convDelay: Int
-    
+
     // Model structure
     public let nUnits: Int
     public let nHeads: Int
@@ -48,10 +48,10 @@ public struct LSEENDMetadata: Codable {
     public let decNLayers: Int
     public let convKernelSize: Int
     public var headDim: Int { nUnits / nHeads }
-    
+
     /// Mel frames per chunk
     public var melFrames: Int { (chunkSize - 1) * subsampling + 2 * contextSize + 1 }
-    
+
     public var nFFT: Int {
         1 << (Int.bitWidth - (winLength - 1).leadingZeroBitCount)
     }
@@ -66,7 +66,7 @@ public struct LSEENDState: ~Copyable {
     public var cnnWindow: MLMultiArray
     public var decRetKv: MLMultiArray
     public var decRetScale: MLMultiArray
-    
+
     public init(
         encRetKv: MLMultiArray,
         encRetScale: MLMultiArray,
@@ -82,7 +82,7 @@ public struct LSEENDState: ~Copyable {
         self.decRetKv = decRetKv
         self.decRetScale = decRetScale
     }
-    
+
     public init(from metadata: borrowing LSEENDMetadata) throws {
         let Lenc = NSNumber(value: metadata.encNLayers)
         let Ldec = NSNumber(value: metadata.decNLayers)
@@ -92,11 +92,11 @@ public struct LSEENDState: ~Copyable {
         let K = NSNumber(value: metadata.convKernelSize)
         let Kcnn = NSNumber(value: 2 * metadata.convDelay)
         let nSpk = NSNumber(value: metadata.maxNspks)
-        
+
         func makeArray(shape: [NSNumber]) throws -> MLMultiArray {
             try ANEMemoryUtils.createAlignedArray(shape: shape, dataType: .float32)
         }
-        
+
         self.init(
             encRetKv: try makeArray(shape: [Lenc, 1, H, hd, hd]),
             encRetScale: try makeArray(shape: [Lenc, 1]),
@@ -105,10 +105,10 @@ public struct LSEENDState: ~Copyable {
             decRetKv: try makeArray(shape: [Ldec, nSpk, H, hd, hd]),
             decRetScale: try makeArray(shape: [Ldec, 1])
         )
-        
+
         self.reset()
     }
-    
+
     public func copy() -> LSEENDState {
         func clone(_ src: MLMultiArray) -> MLMultiArray {
             let dst = try! ANEMemoryUtils.createAlignedArray(
@@ -126,7 +126,7 @@ public struct LSEENDState: ~Copyable {
             decRetScale: clone(decRetScale)
         )
     }
-    
+
     public func copy(to dst: borrowing LSEENDState) {
         ANEMemoryUtils.strideAwareCopy(from: encRetKv, to: dst.encRetKv)
         ANEMemoryUtils.strideAwareCopy(from: encRetScale, to: dst.encRetScale)
@@ -135,7 +135,7 @@ public struct LSEENDState: ~Copyable {
         ANEMemoryUtils.strideAwareCopy(from: decRetKv, to: dst.decRetKv)
         ANEMemoryUtils.strideAwareCopy(from: decRetScale, to: dst.decRetScale)
     }
-    
+
     public func reset() {
         func clear(_ buffer: MLMultiArray) {
             buffer.withUnsafeMutableBufferPointer(ofType: Float.self) { buf, _ in
@@ -143,7 +143,7 @@ public struct LSEENDState: ~Copyable {
                 memset(base, 0, buf.count * MemoryLayout<Float>.stride)
             }
         }
-        
+
         clear(encRetKv)
         clear(encRetScale)
         clear(encConvCache)

@@ -2,7 +2,6 @@ import Foundation
 import CoreML
 import Accelerate
 
-
 // MARK: - Feature Provider
 public class LSEENDFeatureProvider {
     public struct Snapshot: ~Copyable {
@@ -13,12 +12,12 @@ public class LSEENDFeatureProvider {
         let cmnCount: Int
         let decoderMaskEnd: Int
     }
-    
+
     /// Number of mel chunks currently ready for `emitNextChunk()`.
     public var readyChunks: Int { lock.withLock { melQueue.readyChunks } }
-    
+
     // MARK: Private Attributes
-    
+
     private let melSpectrogram: AudioMelSpectrogram
     private let converter: AudioConverter
     private let input: LSEENDInput
@@ -28,7 +27,7 @@ public class LSEENDFeatureProvider {
 
     private var cmnMean: [Float]
     private var cmnCount: Int
-    
+
     private var isRightContextEmpty: Bool = true
 
     private var decoderMaskEnd: Int
@@ -60,13 +59,13 @@ public class LSEENDFeatureProvider {
         self.flushSampleCount =
             (contextMels + metadata.convDelay * metadata.subsampling) * metadata.hopLength
             + contextSamples
-        
+
         self.chunkFrames = metadata.chunkSize
-        
-        var decoderMaskTemp = Array<Float>(repeating: 1, count: metadata.convDelay + metadata.chunkSize)
+
+        var decoderMaskTemp = [Float](repeating: 1, count: metadata.convDelay + metadata.chunkSize)
         vDSP_vclr(&decoderMaskTemp, 1, vDSP_Length(metadata.convDelay))
         self.decoderMask = decoderMaskTemp
-        
+
         // Initialize processors
         self.melSpectrogram = AudioMelSpectrogram(
             sampleRate: metadata.sampleRate,
@@ -80,9 +79,9 @@ public class LSEENDFeatureProvider {
             logFloorMode: .clamped,
             windowPeriodic: true
         )
-        
+
         self.converter = AudioConverter(sampleRate: Double(metadata.sampleRate))
-        
+
         // Initialize state
         if let snapshot {
             self.melQueue = snapshot.melQueue
@@ -104,18 +103,18 @@ public class LSEENDFeatureProvider {
                 rightContextLength: rightSamples,
                 stride: 1
             )
-            
+
             self.cmnMean = .init(repeating: 0, count: nMels)
             self.cmnCount = 0
             self.decoderMaskEnd = 0
-            
+
             // Initialize preprocessor and converter
             self.input = try LSEENDInput(from: metadata)
         }
     }
-    
+
     // MARK: - Push Audio
-    
+
     /// Add audio to the processing queue
     /// - Parameters:
     ///   - samples: Audio samples to enqueue
@@ -140,7 +139,7 @@ public class LSEENDFeatureProvider {
             processAudioQueue()
         }
     }
-    
+
     /// Resample and enqueue a full audio file.
     /// - Parameter url: Audio file to read.
     /// - Returns: Number of samples enqueued (at the model's sample rate).
@@ -166,8 +165,8 @@ public class LSEENDFeatureProvider {
         // 2. Round up to the next audio-chunk boundary so popAllChunks consumes
         //    every real sample plus the silence we just pushed.
         let unread = audioQueue.unreadFloats
-        let chunk  = audioQueue.chunkFloats
-        let ctx    = audioQueue.contextFloats
+        let chunk = audioQueue.chunkFloats
+        let ctx = audioQueue.contextFloats
         let overCtx = max(0, unread - ctx)
         let shortfall = (chunk - overCtx % chunk) % chunk
         if shortfall > 0 {
@@ -176,12 +175,12 @@ public class LSEENDFeatureProvider {
 
         // 3. Drain audioQueue → STFT → log10 → CMN → melQueue.
         if flush {
-            processAudioQueue()            
+            processAudioQueue()
         }
     }
-    
+
     // MARK: - Read Chunk
-    
+
     /// Read the next chunk from the mel
     public func emitNextChunk() throws -> LSEENDInput? {
         lock.lock()
@@ -189,21 +188,21 @@ public class LSEENDFeatureProvider {
 
         processAudioQueue()
         guard let rawChunk = melQueue.popNextChunk() else { return nil }
-        
+
         // Advance decoder mask
         decoderMaskEnd = min(decoderMaskEnd + chunkFrames, decoderMask.count)
 
         try input.loadInputs(
             melFeatures: rawChunk,
-            decoderMask: decoderMask[decoderMaskEnd-chunkFrames..<decoderMaskEnd],
+            decoderMask: decoderMask[decoderMaskEnd - chunkFrames..<decoderMaskEnd],
             warmupFrames: min(decoderMask.count - decoderMaskEnd, chunkFrames)
         )
 
         return input
     }
-    
+
     // MARK: - Snapshot and Rollback
-    
+
     public func takeSnapshot() -> Snapshot {
         lock.lock()
         defer { lock.unlock() }
@@ -217,7 +216,7 @@ public class LSEENDFeatureProvider {
         )
         return result
     }
-    
+
     /// Rollback to a previous snapshot.
     /// - Parameters:
     ///   - snapshot Snapshot to revert to
@@ -232,7 +231,7 @@ public class LSEENDFeatureProvider {
         self.cmnCount = snapshot.cmnCount
         self.decoderMaskEnd = snapshot.decoderMaskEnd
     }
-    
+
     /// Clear preprocessor buffers + model recurrence state + frame counter.
     public func reset() {
         lock.lock()
@@ -244,9 +243,9 @@ public class LSEENDFeatureProvider {
         melQueue.reset()
         input.resetState()
     }
-    
+
     // MARK: - Helpers
-    
+
     private func processAudioQueue() {
         guard let audioChunk = audioQueue.popAllChunks() else { return }
 
@@ -294,7 +293,7 @@ public struct StreamingChunkQueue {
 
     /// Padded chunk size — width of a `popNextChunk` / `popAllChunks` slice.
     public let paddedChunkFloats: Int
-    
+
     /// Whether the buffer is empty
     public var isEmpty: Bool { buffer.isEmpty }
 
@@ -303,9 +302,9 @@ public struct StreamingChunkQueue {
 
     /// Number of full chunks currently poppable via `popNextChunk` / `popAllChunks`.
     public var readyChunks: Int { max(0, (unreadFloats - contextFloats) / chunkFloats) }
-    
+
     // MARK: - Private attributes
-    
+
     /// Pre-pad width in floats — how many leading zeros are seeded at init
     private let leftContextFloats: Int
 
@@ -321,7 +320,7 @@ public struct StreamingChunkQueue {
     }
 
     // MARK: - Init
-    
+
     /// - Parameters:
     ///   - chunkLength Number of frames in a chunk
     ///   - leftContextLength Number of frames in a chunk's left context
@@ -344,7 +343,7 @@ public struct StreamingChunkQueue {
         self.buffer.reserveCapacity(paddedChunkFloats * 2)
         self.buffer.append(contentsOf: repeatElement(0, count: leftContextFloats))
     }
-    
+
     // MARK: - Append and Pop
 
     public mutating func append<C: Collection>(_ newElements: C)
@@ -362,7 +361,7 @@ public struct StreamingChunkQueue {
     /// Pop the last chunk
     public mutating func popNextChunk() -> ArraySlice<Float>? {
         guard hasChunk else { return nil }
-        let result = buffer[head..<head+paddedChunkFloats]
+        let result = buffer[head..<head + paddedChunkFloats]
         head += chunkFloats
         return result
     }
@@ -371,7 +370,7 @@ public struct StreamingChunkQueue {
     public mutating func popAllChunks() -> ArraySlice<Float>? {
         guard hasChunk else { return nil }
         let newHead = head + (buffer.count - head - contextFloats) / chunkFloats * chunkFloats
-        let result = buffer[head..<newHead+contextFloats]
+        let result = buffer[head..<newHead + contextFloats]
         head = newHead
         return result
     }

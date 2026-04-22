@@ -236,7 +236,8 @@ enum LSEENDBenchmark {
         // Download dataset if needed
         if autoDownload && dataset == .ami {
             print("Downloading AMI dataset if needed...")
-            let meetingsToDownload = singleFile.map { [$0] } ?? DiarizationBenchmarkUtils.getAMIMeetings(split: amiSplit)
+            let meetingsToDownload =
+                singleFile.map { [$0] } ?? DiarizationBenchmarkUtils.getAMIMeetings(split: amiSplit)
             await DatasetDownloader.downloadAMIDataset(
                 variant: .sdm,
                 force: false,
@@ -255,7 +256,9 @@ enum LSEENDBenchmark {
                     try AMIKaldiData.ensureSplitExists(split: amiSplit)
                 } else if !AMIKaldiData.splitExists(split: amiSplit) {
                     print("AMI Kaldi split not found at \(splitDirectory.path)")
-                    print("Run `fluidaudio lseend-benchmark --auto-download` to build Datasets/ami/mhs/data/\(amiSplit.rawValue).")
+                    print(
+                        "Run `fluidaudio lseend-benchmark --auto-download` to build Datasets/ami/mhs/data/\(amiSplit.rawValue)."
+                    )
                     return
                 }
             } catch {
@@ -489,8 +492,7 @@ enum LSEENDBenchmark {
                     duration: duration
                 )
                 groundTruthSpeakers = Set(referenceSegments.map(\.speaker)).count
-            } else if
-                let rttmURL = DiarizationBenchmarkUtils.getRTTMURL(for: meetingName, dataset: dataset),
+            } else if let rttmURL = DiarizationBenchmarkUtils.getRTTMURL(for: meetingName, dataset: dataset),
                 FileManager.default.fileExists(atPath: rttmURL.path)
             {
                 let groundTruth = try RTTMParser.loadSegments(from: rttmURL.path)

@@ -81,15 +81,15 @@ final class AMIParserTests: XCTestCase {
         try FileManager.default.createDirectory(at: corpusURL, withIntermediateDirectories: true)
 
         let meetingsXML = """
-        <meetings>
-          <meeting observation="ES2004a">
-            <speaker nxt_agent="A" global_name="SpeakerA"/>
-            <speaker nxt_agent="B" global_name="SpeakerB"/>
-            <speaker nxt_agent="C" global_name="SpeakerC"/>
-            <speaker nxt_agent="D" global_name="SpeakerD"/>
-          </meeting>
-        </meetings>
-        """
+            <meetings>
+              <meeting observation="ES2004a">
+                <speaker nxt_agent="A" global_name="SpeakerA"/>
+                <speaker nxt_agent="B" global_name="SpeakerB"/>
+                <speaker nxt_agent="C" global_name="SpeakerC"/>
+                <speaker nxt_agent="D" global_name="SpeakerD"/>
+              </meeting>
+            </meetings>
+            """
         try meetingsXML.write(
             to: corpusURL.appendingPathComponent("meetings.xml"),
             atomically: true,
@@ -97,13 +97,13 @@ final class AMIParserTests: XCTestCase {
         )
 
         let speakerAWords = """
-        <nite:root xmlns:nite="http://nite.sourceforge.net/">
-          <w nite:id="a1" starttime="0.10" endtime="0.40">hello</w>
-          <w nite:id="a2" starttime="0.45" endtime="0.70">world</w>
-          <w nite:id="a3" starttime="0.71" endtime="1.00" punc="true">.</w>
-          <pause starttime="1.00" endtime="1.20"/>
-        </nite:root>
-        """
+            <nite:root xmlns:nite="http://nite.sourceforge.net/">
+              <w nite:id="a1" starttime="0.10" endtime="0.40">hello</w>
+              <w nite:id="a2" starttime="0.45" endtime="0.70">world</w>
+              <w nite:id="a3" starttime="0.71" endtime="1.00" punc="true">.</w>
+              <pause starttime="1.00" endtime="1.20"/>
+            </nite:root>
+            """
         try speakerAWords.write(
             to: wordsURL.appendingPathComponent("ES2004a.A.words.xml"),
             atomically: true,
@@ -111,11 +111,11 @@ final class AMIParserTests: XCTestCase {
         )
 
         let speakerBWords = """
-        <nite:root xmlns:nite="http://nite.sourceforge.net/">
-          <w nite:id="b1" starttime="1.50" endtime="1.70">second</w>
-          <w nite:id="b2" starttime="1.71" endtime="1.90">speaker</w>
-        </nite:root>
-        """
+            <nite:root xmlns:nite="http://nite.sourceforge.net/">
+              <w nite:id="b1" starttime="1.50" endtime="1.70">second</w>
+              <w nite:id="b2" starttime="1.71" endtime="1.90">speaker</w>
+            </nite:root>
+            """
         try speakerBWords.write(
             to: wordsURL.appendingPathComponent("ES2004a.B.words.xml"),
             atomically: true,
@@ -135,12 +135,12 @@ final class AMIParserTests: XCTestCase {
         )
 
         let speakerASegments = """
-        <nite:root xmlns:nite="http://nite.sourceforge.net/">
-          <segment nite:id="a1" transcriber_start="0.004" transcriber_end="0.126"/>
-          <segment nite:id="a2" transcriber_start="0.129" transcriber_end="0.254"/>
-          <segment nite:id="a3" transcriber_start="0.601" transcriber_end="0.799"/>
-        </nite:root>
-        """
+            <nite:root xmlns:nite="http://nite.sourceforge.net/">
+              <segment nite:id="a1" transcriber_start="0.004" transcriber_end="0.126"/>
+              <segment nite:id="a2" transcriber_start="0.129" transcriber_end="0.254"/>
+              <segment nite:id="a3" transcriber_start="0.601" transcriber_end="0.799"/>
+            </nite:root>
+            """
         try speakerASegments.write(
             to: segmentsURL.appendingPathComponent("ES2004a.A.segments.xml"),
             atomically: true,
@@ -148,10 +148,10 @@ final class AMIParserTests: XCTestCase {
         )
 
         let speakerBSegments = """
-        <nite:root xmlns:nite="http://nite.sourceforge.net/">
-          <segment nite:id="b1" transcriber_start="1.001" transcriber_end="1.019"/>
-        </nite:root>
-        """
+            <nite:root xmlns:nite="http://nite.sourceforge.net/">
+              <segment nite:id="b1" transcriber_start="1.001" transcriber_end="1.019"/>
+            </nite:root>
+            """
         try speakerBSegments.write(
             to: segmentsURL.appendingPathComponent("ES2004a.B.segments.xml"),
             atomically: true,

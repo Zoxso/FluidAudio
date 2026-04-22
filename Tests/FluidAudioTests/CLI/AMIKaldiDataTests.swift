@@ -83,7 +83,9 @@ final class AMIKaldiDataTests: XCTestCase {
         XCTAssertEqual(segments[2].end, 1.02, accuracy: 0.0001)
     }
 
-    private func makeFixture(meetingId: String) throws -> (
+    private func makeFixture(
+        meetingId: String
+    ) throws -> (
         root: URL, annotationsRoot: URL, audioRoot: URL, outputDirectory: URL
     ) {
         let root = FileManager.default.temporaryDirectory
@@ -100,15 +102,15 @@ final class AMIKaldiDataTests: XCTestCase {
         try FileManager.default.createDirectory(at: outputDirectory, withIntermediateDirectories: true)
 
         let meetingsXML = """
-        <meetings>
-          <meeting observation="\(meetingId)">
-            <speaker nxt_agent="A" global_name="SpeakerA"/>
-            <speaker nxt_agent="B" global_name="SpeakerB"/>
-            <speaker nxt_agent="C" global_name="SpeakerC"/>
-            <speaker nxt_agent="D" global_name="SpeakerD"/>
-          </meeting>
-        </meetings>
-        """
+            <meetings>
+              <meeting observation="\(meetingId)">
+                <speaker nxt_agent="A" global_name="SpeakerA"/>
+                <speaker nxt_agent="B" global_name="SpeakerB"/>
+                <speaker nxt_agent="C" global_name="SpeakerC"/>
+                <speaker nxt_agent="D" global_name="SpeakerD"/>
+              </meeting>
+            </meetings>
+            """
         try meetingsXML.write(
             to: corpusRoot.appendingPathComponent("meetings.xml"),
             atomically: true,
@@ -116,12 +118,12 @@ final class AMIKaldiDataTests: XCTestCase {
         )
 
         let speakerASegments = """
-        <nite:root xmlns:nite="http://nite.sourceforge.net/">
-          <segment nite:id="a1" transcriber_start="0.004" transcriber_end="0.126"/>
-          <segment nite:id="a2" transcriber_start="0.129" transcriber_end="0.254"/>
-          <segment nite:id="a3" transcriber_start="0.601" transcriber_end="0.799"/>
-        </nite:root>
-        """
+            <nite:root xmlns:nite="http://nite.sourceforge.net/">
+              <segment nite:id="a1" transcriber_start="0.004" transcriber_end="0.126"/>
+              <segment nite:id="a2" transcriber_start="0.129" transcriber_end="0.254"/>
+              <segment nite:id="a3" transcriber_start="0.601" transcriber_end="0.799"/>
+            </nite:root>
+            """
         try speakerASegments.write(
             to: segmentsRoot.appendingPathComponent("\(meetingId).A.segments.xml"),
             atomically: true,
@@ -129,10 +131,10 @@ final class AMIKaldiDataTests: XCTestCase {
         )
 
         let speakerBSegments = """
-        <nite:root xmlns:nite="http://nite.sourceforge.net/">
-          <segment nite:id="b1" transcriber_start="1.001" transcriber_end="1.019"/>
-        </nite:root>
-        """
+            <nite:root xmlns:nite="http://nite.sourceforge.net/">
+              <segment nite:id="b1" transcriber_start="1.001" transcriber_end="1.019"/>
+            </nite:root>
+            """
         try speakerBSegments.write(
             to: segmentsRoot.appendingPathComponent("\(meetingId).B.segments.xml"),
             atomically: true,

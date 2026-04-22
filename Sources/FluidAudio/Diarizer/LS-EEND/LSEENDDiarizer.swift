@@ -109,8 +109,7 @@ public final class LSEENDDiarizer: Diarizer {
     // MARK: - Streaming API
 
     public func addAudio<C: Collection>(_ samples: C, sourceSampleRate: Double?) throws
-    where C.Element == Float
-    {
+    where C.Element == Float {
         guard !samples.isEmpty else { return }
         guard let session else {
             throw LSEENDError.notInitialized
@@ -217,7 +216,7 @@ public final class LSEENDDiarizer: Diarizer {
         var processed = 0
         var newPreds: [Float] = []
         newPreds.reserveCapacity(totalChunks * numSpeakers * chunkSize)
-        
+
         while let input = try session.emitNextChunk() {
             if recordFrames {
                 input.warmupFrames = max(min(rightContext - numFramesProcessed, chunkSize), 0)
@@ -259,55 +258,55 @@ public final class LSEENDDiarizer: Diarizer {
         guard let session else {
             throw LSEENDError.notInitialized
         }
-        
+
         let sessionSnapshot = session.takeSnapshot()
         let timelineSnapshot = timeline.takeSnapshot()
         let isNamed = name != nil
 
         let requireNewSpeaker = isNamed && !overwriteAssignedSpeakerName
-        
+
         if timeline.hasSegments {
             logger.warning("Enrolling speaker mid session. The timeline will be reset if successful.")
         }
-        
+
         // Flush queued audio, including right context.
         try session.drainRightContextWithSilence()
         _ = try flush(progressCallback: nil)
-        
+
         // Snapshot old speakers starting here after old audio has been flushed
         let oldSlots: Set<Int>
-        
+
         if isNamed {
             oldSlots = Set(timeline.speakers.filter { $0.value.name != nil }.keys)
         } else {
             oldSlots = Set(timeline.speakers.keys)
         }
-        
+
         try session.enqueueAudio(
             samples,
             withSampleRate: sourceSampleRate,
             eagerPreprocessing: false
         )
-        
+
         // Flush enrollment audio queued in the right context
         try session.drainRightContextWithSilence()
-        
+
         // Process enrollment audio. The new speaker will be extracted from this timeline update.
         guard let update = try flush(recordFrames: false, progressCallback: nil),
-              !update.finalizedSegments.isEmpty
+            !update.finalizedSegments.isEmpty
         else {
             session.rollback(to: sessionSnapshot)
             timeline.rollback(to: timelineSnapshot)
             return nil
         }
-        
+
         // Get the new/unnamed speaker with the most speech if any exist.
         // Fallback to old speaker with the most speech if overwrites are allowed.
-        var speechActivities: [Int : Float] = [:]
+        var speechActivities: [Int: Float] = [:]
         for segment in update.finalizedSegments {
             speechActivities[segment.speakerIndex, default: 0] += segment.activity * Float(segment.length)
         }
-        
+
         // Prioritized unnamed speakers; speech activity is secondary
         let bestSlot = speechActivities.max {
             let isFirstOld = oldSlots.contains($0.key)
@@ -317,20 +316,20 @@ public final class LSEENDDiarizer: Diarizer {
             }
             return isFirstOld
         }?.key
-        
+
         guard let bestSlot,
-              let enrolledSpeaker = timeline.speakers[bestSlot],
-              !requireNewSpeaker || !oldSlots.contains(bestSlot)
+            let enrolledSpeaker = timeline.speakers[bestSlot],
+            !requireNewSpeaker || !oldSlots.contains(bestSlot)
         else {
             session.rollback(to: sessionSnapshot)
             timeline.rollback(to: timelineSnapshot)
             return nil
         }
-        
+
         // Rename speaker and report success
         enrolledSpeaker.name = name
         timeline.reset(keepingSpeakers: true)
-        
+
         return enrolledSpeaker
     }
 
