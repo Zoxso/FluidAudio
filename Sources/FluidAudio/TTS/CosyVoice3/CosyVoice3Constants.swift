@@ -3,13 +3,20 @@ import Foundation
 /// Central constants for the CosyVoice3 (Mandarin) CoreML pipeline.
 ///
 /// Shipping config (frozen):
-/// - LLM-Prefill-T256-M768-fp16     (cpuAndNeuralEngine)
-/// - LLM-Decode-M768-fp16           (cpuAndNeuralEngine)
-/// - Flow-N250-fp16                 (cpuAndGPU — pure CPU overflows fused
+/// - LLM-Prefill-T256-M768-fp16           (cpuAndNeuralEngine)
+/// - LLM-Decode-M768-fp16-stateful        (cpuAndGPU — see note)
+/// - Flow-N250-fp16                       (cpuAndGPU — pure CPU overflows fused
 ///   LayerNorm → NaN; ANE refuses to compile; GPU path uses fp32 accumulators
 ///   internally and is stable + ~3× faster than the previous fp32/cpuOnly
 ///   shipping config)
-/// - HiFT-T500-fp16                 (cpuAndNeuralEngine)
+/// - HiFT-T500-fp16                       (cpuAndNeuralEngine)
+///
+/// The stateful decode model uses per-layer `MLState` buffers for the
+/// KV cache (48 tensors, `[1, 2, 768, 64]` fp16 each) instead of
+/// round-tripping 18 MB of kv_k / kv_v MLMultiArrays every step. ANE
+/// refuses to compile the stateful graph (`MILCompilerForANE
+/// ANECCompile() FAILED`), mirroring Flow — decode therefore runs on
+/// `.cpuAndGPU`. Requires macOS 15 / iOS 18.
 public enum CosyVoice3Constants {
 
     // MARK: - LLM shapes
@@ -53,8 +60,8 @@ public enum CosyVoice3Constants {
     public enum Files {
         public static let llmPrefill = "LLM-Prefill-T256-M768-fp16.mlpackage"
         public static let llmPrefillSubdir = "llm-fp16"
-        public static let llmDecode = "LLM-Decode-M768-fp16.mlpackage"
-        public static let llmDecodeSubdir = "llm-fp16"
+        public static let llmDecode = "LLM-Decode-M768-fp16-stateful.mlpackage"
+        public static let llmDecodeSubdir = "llm-fp16-stateful"
         public static let flow = "Flow-N250-fp16.mlpackage"
         public static let flowSubdir = "flow-fp16-n250"
         public static let hift = "HiFT-T500-fp16.mlpackage"

@@ -28,10 +28,11 @@ public actor CosyVoice3ModelStore {
 
     /// - Parameters:
     ///   - directory: Base build directory that contains
-    ///     `llm-fp16/`, `flow-fp16-n250/`, `hift-fp16-t500/`, `embeddings/`.
-    ///   - computeUnits: Defaults to `.cpuAndNeuralEngine`. Applied to LLM +
-    ///     HiFT models. Flow always runs on `.cpuAndGPU` regardless (see
-    ///     `loadIfNeeded()` for why).
+    ///     `llm-fp16/`, `llm-fp16-stateful/`, `flow-fp16-n250/`,
+    ///     `hift-fp16-t500/`, `embeddings/`.
+    ///   - computeUnits: Defaults to `.cpuAndNeuralEngine`. Applied to
+    ///     LLM-Prefill + HiFT models only. LLM-Decode (stateful) and Flow
+    ///     both force `.cpuAndGPU` regardless (see `loadIfNeeded()`).
     public init(directory: URL, computeUnits: MLComputeUnits = .cpuAndNeuralEngine) {
         self.directory = directory
         self.computeUnits = computeUnits
@@ -66,7 +67,15 @@ public actor CosyVoice3ModelStore {
         let prefill = try await compileAndLoad(prefillURL, configuration: config)
         logger.info("Loaded \(CosyVoice3Constants.Files.llmPrefill)")
 
-        let decode = try await compileAndLoad(decodeURL, configuration: config)
+        // Stateful decode MUST run on `.cpuAndGPU`:
+        //   - ANE refuses to compile the stateful graph (same failure mode
+        //     as Flow: `MILCompilerForANE ANECCompile() FAILED`), so
+        //     `.cpuAndNE` / `.all` deadlock load
+        //   - CPU-only works but is ~2× slower than the GPU path
+        // Ignore the user-supplied `computeUnits` for decode.
+        let decodeConfig = MLModelConfiguration()
+        decodeConfig.computeUnits = .cpuAndGPU
+        let decode = try await compileAndLoad(decodeURL, configuration: decodeConfig)
         logger.info("Loaded \(CosyVoice3Constants.Files.llmDecode)")
 
         // Flow is fp16 and MUST run on `.cpuAndGPU`:

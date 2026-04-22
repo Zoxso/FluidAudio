@@ -42,13 +42,21 @@ public final class CosyVoice3SpeechEmbeddings: @unchecked Sendable {
     /// for `tokenId`, converted from fp16. Allocates fresh each call — the
     /// LLM decode step owns the tensor for exactly one prediction.
     public func embedding(tokenId: Int32) throws -> MLMultiArray {
+        let array = try MLMultiArray(
+            shape: [1, 1, NSNumber(value: embedDim)],
+            dataType: .float32)
+        try copyEmbedding(tokenId: tokenId, into: array)
+        return array
+    }
+
+    /// Copy the fp16 embedding row for `tokenId` into an existing
+    /// `[1, 1, embedDim]` fp32 MLMultiArray. Avoids the per-step allocation
+    /// of `embedding(tokenId:)` in the hot decode loop.
+    public func copyEmbedding(tokenId: Int32, into array: MLMultiArray) throws {
         guard tokenId >= 0 && Int(tokenId) < numTokens else {
             throw CosyVoice3Error.invalidShape(
                 "speech token id \(tokenId) out of range [0, \(numTokens))")
         }
-        let array = try MLMultiArray(
-            shape: [1, 1, NSNumber(value: embedDim)],
-            dataType: .float32)
         let rowStart = Int(tokenId) * rowByteSize
         let dim = embedDim
         let lastStride = array.strides.last?.intValue ?? 1
@@ -60,6 +68,5 @@ public final class CosyVoice3SpeechEmbeddings: @unchecked Sendable {
                 dstPtr[i * lastStride] = Float(fp16Ptr[i])
             }
         }
-        return array
     }
 }

@@ -6,6 +6,11 @@ import Foundation
 /// Mirrors `verify/test_coreml_e2e_fp16.py::main()` in Python. Each stage is
 /// implemented as a method on this type, keeping the state (KV cache, running
 /// decoded list) local to a single synthesis call.
+///
+/// Decode uses CoreML `MLState` (macOS 15 / iOS 18): 48 per-layer buffers
+/// (`kv_k_0..kv_k_23`, `kv_v_0..kv_v_23`) replace the 18 MB kv_k / kv_v
+/// round-trip per step. Prefill remains non-stateful and its `kv_k` / `kv_v`
+/// outputs seed the decode state once after prefill.
 public final class CosyVoice3Synthesizer: @unchecked Sendable {
 
     private let logger = AppLogger(subsystem: "com.fluidaudio.tts", category: "CosyVoice3Synthesizer")
@@ -40,10 +45,19 @@ public final class CosyVoice3Synthesizer: @unchecked Sendable {
             sampler.seedTokens(fixture.decodedTokens)
         }
 
-        // 1) Prefill
+        // 1) Prefill (non-stateful: returns kv_k / kv_v as outputs)
         let (prefillLogits, initialKvK, initialKvV) = try await runPrefill(fixture: fixture)
-        var kvK = initialKvK
-        var kvV = initialKvV
+
+        // Seed decode MLState from prefill kv_k / kv_v.
+        let state = models.decode.makeState()
+        try seedDecodeState(state: state, kvK: initialKvK, kvV: initialKvV)
+
+        // Reusable per-step inputs for decode. `curLenArr` is mutated in place
+        // each step; `inputsEmbedsArr` is overwritten by memcpy per step.
+        let curLenArr = try MLMultiArray(shape: [1], dataType: .int32)
+        let inputsEmbedsArr = try MLMultiArray(
+            shape: [1, 1, NSNumber(value: CosyVoice3Constants.embedDim)],
+            dataType: .float32)
 
         // First token from prefill tail logits.
         var decoded: [Int32] = []
@@ -61,14 +75,12 @@ public final class CosyVoice3Synthesizer: @unchecked Sendable {
         // 2) Decode loop
         var curLen = fixture.tPre
         for step in 1..<maxNew {
-            let nextEmb = try embeddings.embedding(tokenId: topId)
-            let (logits, newKvK, newKvV) = try await runDecode(
-                inputsEmbeds: nextEmb,
-                kvK: kvK,
-                kvV: kvV,
-                curLen: Int32(curLen))
-            kvK = newKvK
-            kvV = newKvV
+            try embeddings.copyEmbedding(tokenId: topId, into: inputsEmbedsArr)
+            curLenArr[0] = NSNumber(value: Int32(curLen))
+            let logits = try runDecodeStateful(
+                inputsEmbeds: inputsEmbedsArr,
+                curLen: curLenArr,
+                state: state)
             topId = sampler.sample(logits: logits, decodedSoFar: decoded)
             curLen += 1
             if CosyVoice3Constants.stopRange.contains(topId) {
@@ -156,31 +168,25 @@ public final class CosyVoice3Synthesizer: @unchecked Sendable {
         return (logits, kvK, kvV)
     }
 
-    private func runDecode(
+    /// Run one stateful decode step. `state` is mutated in place via the
+    /// 48 per-layer `kv_k_i` / `kv_v_i` state buffers registered in the
+    /// converted model.
+    private func runDecodeStateful(
         inputsEmbeds: MLMultiArray,
-        kvK: MLMultiArray,
-        kvV: MLMultiArray,
-        curLen: Int32
-    ) async throws -> (logits: [Float], kvK: MLMultiArray, kvV: MLMultiArray) {
-        let curLenArr = try MLMultiArray(shape: [1], dataType: .int32)
-        curLenArr[0] = NSNumber(value: curLen)
-
+        curLen: MLMultiArray,
+        state: MLState
+    ) throws -> [Float] {
         let features: [String: Any] = [
             "inputs_embeds": inputsEmbeds,
-            "kv_k": kvK,
-            "kv_v": kvV,
-            "cur_len": curLenArr,
+            "cur_len": curLen,
         ]
         let provider = try MLDictionaryFeatureProvider(dictionary: features)
-        let output = try await models.decode.compatPrediction(
-            from: provider, options: MLPredictionOptions())
+        let output = try models.decode.prediction(from: provider, using: state)
 
         guard
-            let logitsArr = output.featureValue(for: "speech_logits")?.multiArrayValue,
-            let newKvK = output.featureValue(for: "kv_k_out")?.multiArrayValue,
-            let newKvV = output.featureValue(for: "kv_v_out")?.multiArrayValue
+            let logitsArr = output.featureValue(for: "speech_logits")?.multiArrayValue
         else {
-            throw CosyVoice3Error.predictionFailed("decode: missing outputs")
+            throw CosyVoice3Error.predictionFailed("decode: missing speech_logits")
         }
         // logits shape = [1, 1, 6761] fp32; strides may be non-compact.
         let count = CosyVoice3Constants.speechVocab
@@ -189,7 +195,112 @@ public final class CosyVoice3Synthesizer: @unchecked Sendable {
         let vocabStride = strides.last ?? 1
         let base = logitsArr.dataPointer.bindMemory(to: Float.self, capacity: logitsArr.count)
         for i in 0..<count { logits[i] = base[i * vocabStride] }
-        return (logits, newKvK, newKvV)
+        return logits
+    }
+
+    /// Seed the 48 decode state buffers (`kv_k_0..kv_k_23`, `kv_v_0..kv_v_23`)
+    /// from prefill's `kv_k` / `kv_v` outputs.
+    ///
+    /// Prefill logical shape per cache is `[L=24, 1, Hkv=2, M=768, D=64]`
+    /// fp16; each per-layer state buffer is `[1, 2, 768, 64]` fp16. Copy
+    /// layer-by-layer using stride-aware indexing (prefill strides may not
+    /// be compact), letting CoreML's state writer convert to the underlying
+    /// fp16 storage.
+    private func seedDecodeState(
+        state: MLState,
+        kvK: MLMultiArray,
+        kvV: MLMultiArray
+    ) throws {
+        // Prefill declares fp32 KV outputs at its CoreML I/O boundary
+        // (even though the weights / activations internally are fp16).
+        // Decode state buffers are fp16. Convert per-element as we copy.
+        guard kvK.dataType == .float32 && kvV.dataType == .float32 else {
+            throw CosyVoice3Error.predictionFailed(
+                "seedDecodeState: expected fp32 KV from prefill (kv_k=\(kvK.dataType.rawValue) kv_v=\(kvV.dataType.rawValue))")
+        }
+
+        let L = CosyVoice3Constants.numLayers
+        let H = CosyVoice3Constants.kvHeads
+        let M = CosyVoice3Constants.kvMaxLength
+        let D = CosyVoice3Constants.headDim
+
+        // Prefill output strides for shape [L, 1, H, M, D].
+        let kStrides = kvK.strides.map { $0.intValue }
+        let vStrides = kvV.strides.map { $0.intValue }
+        let kLayerStride = kStrides[0]
+        let kHStride = kStrides[2]
+        let kMStride = kStrides[3]
+        let kDStride = kStrides[4]
+        let vLayerStride = vStrides[0]
+        let vHStride = vStrides[2]
+        let vMStride = vStrides[3]
+        let vDStride = vStrides[4]
+
+        let kSrcPtr = kvK.dataPointer.bindMemory(to: Float.self, capacity: kvK.count)
+        let vSrcPtr = kvV.dataPointer.bindMemory(to: Float.self, capacity: kvV.count)
+
+        // Collect dtype-mismatch errors from inside the non-throwing closures.
+        var stateDtypeError: String?
+
+        for i in 0..<L {
+            state.withMultiArray(for: "kv_k_\(i)") { buf in
+                guard buf.dataType == .float16 else {
+                    if stateDtypeError == nil {
+                        stateDtypeError = "kv_k_\(i) expected fp16 state, got \(buf.dataType.rawValue)"
+                    }
+                    return
+                }
+                let b = buf.strides.map { $0.intValue }
+                let dPtr = buf.dataPointer.bindMemory(to: Float16.self, capacity: buf.count)
+                Self.copyLayerF32ToF16(
+                    src: kSrcPtr, srcLayerBase: i * kLayerStride,
+                    srcHStride: kHStride, srcMStride: kMStride, srcDStride: kDStride,
+                    dst: dPtr,
+                    dstHStride: b[1], dstMStride: b[2], dstDStride: b[3],
+                    H: H, M: M, D: D)
+            }
+            state.withMultiArray(for: "kv_v_\(i)") { buf in
+                guard buf.dataType == .float16 else {
+                    if stateDtypeError == nil {
+                        stateDtypeError = "kv_v_\(i) expected fp16 state, got \(buf.dataType.rawValue)"
+                    }
+                    return
+                }
+                let b = buf.strides.map { $0.intValue }
+                let dPtr = buf.dataPointer.bindMemory(to: Float16.self, capacity: buf.count)
+                Self.copyLayerF32ToF16(
+                    src: vSrcPtr, srcLayerBase: i * vLayerStride,
+                    srcHStride: vHStride, srcMStride: vMStride, srcDStride: vDStride,
+                    dst: dPtr,
+                    dstHStride: b[1], dstMStride: b[2], dstDStride: b[3],
+                    H: H, M: M, D: D)
+            }
+        }
+
+        if let msg = stateDtypeError {
+            throw CosyVoice3Error.predictionFailed("seedDecodeState: \(msg)")
+        }
+    }
+
+    /// Copy one `[H, M, D]` KV slab from a fp32 prefill output into a fp16
+    /// decode state buffer. Strides may be non-compact on either side.
+    private static func copyLayerF32ToF16(
+        src: UnsafeMutablePointer<Float>,
+        srcLayerBase: Int,
+        srcHStride: Int, srcMStride: Int, srcDStride: Int,
+        dst: UnsafeMutablePointer<Float16>,
+        dstHStride: Int, dstMStride: Int, dstDStride: Int,
+        H: Int, M: Int, D: Int
+    ) {
+        for h in 0..<H {
+            for m in 0..<M {
+                for d in 0..<D {
+                    let sOff = srcLayerBase + h * srcHStride + m * srcMStride + d * srcDStride
+                    let dOff = h * dstHStride + m * dstMStride + d * dstDStride
+                    dst[dOff] = Float16(src[sOff])
+                }
+            }
+        }
     }
 
     private func runFlow(
