@@ -40,7 +40,7 @@ enum DiarizationBenchmarkUtils {
         let allMeetings = getAMIMeetings(split: split)
 
         var availableMeetings: [String] = []
-        for meeting in allMeetings {
+        for meeting in DatasetDownloader.officialAMITestSet {
             let path = getAudioPath(for: meeting, dataset: .ami)
             if FileManager.default.fileExists(atPath: path) {
                 availableMeetings.append(meeting)
