@@ -1202,7 +1202,7 @@ public class DiarizerTimeline {
 
                     aux.endFrame = end
                     aux.hasSegment = true
-                } else if activity >= onset {
+                } else if activity > onset {
                     let start = frame - padOnset
                     aux.speaking = true
 
