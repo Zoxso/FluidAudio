@@ -29,6 +29,7 @@ public enum Repo: String, CaseIterable, Sendable {
     case multilingualG2p = "FluidInference/charsiu-g2p-byt5-coreml"
     case parakeetTdtCtc110m = "FluidInference/parakeet-tdt-ctc-110m-coreml"
     case cohereTranscribeCoreml = "FluidInference/cohere-transcribe-03-2026-coreml/q8"
+    case magpieTts = "FluidInference/magpie-tts-multilingual-357m-coreml"
 
     /// Repository slug (without owner)
     public var name: String {
@@ -81,6 +82,8 @@ public enum Repo: String, CaseIterable, Sendable {
             return "parakeet-tdt-ctc-110m-coreml"
         case .cohereTranscribeCoreml:
             return "cohere-transcribe-03-2026-coreml/q8"
+        case .magpieTts:
+            return "magpie-tts-multilingual-357m-coreml"
         }
     }
 
@@ -171,6 +174,8 @@ public enum Repo: String, CaseIterable, Sendable {
             return "parakeet-tdt-ctc-110m"
         case .cohereTranscribeCoreml:
             return "cohere-transcribe/q8"
+        case .magpieTts:
+            return "magpie-tts"
         default:
             return name.replacingOccurrences(of: "-coreml", with: "")
         }
@@ -591,6 +596,35 @@ public enum ModelNames {
         ]
     }
 
+    /// Magpie TTS Multilingual 357M model names.
+    ///
+    /// Four CoreML models + a `constants/` directory + a `tokenizer/` directory of
+    /// per-language lookup data. The `decoder_prefill` model is optional; when
+    /// absent the prefill runs step-by-step through `decoder_step`.
+    public enum Magpie {
+        public static let textEncoder = "text_encoder"
+        public static let decoderPrefill = "decoder_prefill"
+        public static let decoderStep = "decoder_step"
+        public static let nanocodecDecoder = "nanocodec_decoder"
+
+        public static let textEncoderFile = textEncoder + ".mlmodelc"
+        public static let decoderPrefillFile = decoderPrefill + ".mlmodelc"
+        public static let decoderStepFile = decoderStep + ".mlmodelc"
+        public static let nanocodecDecoderFile = nanocodecDecoder + ".mlmodelc"
+
+        public static let constantsDir = "constants"
+        public static let tokenizerDir = "tokenizer"
+
+        /// Files required for English synthesis. Other languages append their own
+        /// lookup files on top (see `MagpieResourceDownloader`).
+        public static let requiredModels: Set<String> = [
+            textEncoderFile,
+            decoderStepFile,
+            nanocodecDecoderFile,
+            constantsDir,
+        ]
+    }
+
     /// Multilingual G2P (CharsiuG2P ByT5) model names
     public enum MultilingualG2P {
         public static let encoder = "MultilingualG2PEncoder"
@@ -760,6 +794,8 @@ public enum ModelNames {
             return ModelNames.MultilingualG2P.requiredModels
         case .cohereTranscribeCoreml:
             return ModelNames.CohereTranscribe.requiredModels
+        case .magpieTts:
+            return ModelNames.Magpie.requiredModels
         }
     }
 }

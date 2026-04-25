@@ -37,7 +37,7 @@ Want to convert your own model? Check [möbius](https://github.com/FluidInferenc
 
 - **Automatic Speech Recognition (ASR)**: [Parakeet TDT v3](Documentation/Models.md#batch-transcription-near-real-time) (0.6b) and other TDT/CTC models for batch transcription supporting 25 European languages, Japanese, and Chinese; [Parakeet EOU](Documentation/Models.md#streaming-transcription-true-real-time) (120m) for streaming ASR with end-of-utterance detection (English only). See all [ASR models](Documentation/Models.md#asr-models).
 - **Inverse Text Normalization (ITN)**: Post-process ASR output to convert spoken-form to written-form ("two hundred" → "200"). See [text-processing-rs](https://github.com/FluidInference/text-processing-rs)
-- **Text-to-Speech (TTS)**: Kokoro (82m) for parallel synthesis with SSML and pronunciation control across 9 languages (EN, ES, FR, HI, IT, JA, PT, ZH); PocketTTS for streaming TTS with voice cloning support (English only)
+- **Text-to-Speech (TTS)**: Kokoro (82m) for parallel synthesis with SSML and pronunciation control across 9 languages (EN, ES, FR, HI, IT, JA, PT, ZH); PocketTTS for streaming TTS with voice cloning support (English only); Magpie (357m) autoregressive multilingual TTS with 5 speakers, `|…|` IPA override, and 8-language coverage (EN, ES, DE, FR, IT, VI, ZH, HI)
 - **Speaker Diarization (Online + Offline)**: Speaker separation and identification across audio streams. Streaming pipeline for real-time processing and offline batch pipeline with advanced clustering.
 - **Speaker Embedding Extraction**: Generate speaker embeddings for voice comparison and clustering, you can use this for speaker identification
 - **Voice Activity Detection (VAD)**: Voice activity detection with Silero models
@@ -595,6 +595,46 @@ swift run fluidaudiocli tts "Hello from FluidAudio." --auto-download --output ou
 ```
 
 Dictionary and model assets are cached under `~/.cache/fluidaudio/Models/kokoro`.
+
+### Magpie (Multilingual)
+
+Magpie TTS Multilingual (357M) is NVIDIA's autoregressive encoder-decoder TTS with 8-codebook NanoCodec vocoder output at 22.05 kHz. It exposes 5 built-in speakers and supports 8 languages (English, Spanish, German, French, Italian, Vietnamese, Mandarin, Hindi) with a `|…|` IPA override that routes inline phoneme sequences directly to the tokenizer. Japanese is deferred pending OpenJTalk integration.
+
+```swift
+import FluidAudio
+
+Task {
+    let manager = try await MagpieTtsManager.downloadAndCreate(
+        languages: [.english, .spanish]
+    )
+    let result = try await manager.synthesize(
+        text: "Hello | ˈ n ɛ m o ʊ | from FluidAudio.",
+        speaker: .john,
+        language: .english
+    )
+    let wav = AudioWAV.data(from: result.samples, sampleRate: result.sampleRate)
+    try wav.write(to: URL(fileURLWithPath: "hello.wav"))
+}
+```
+
+```bash
+# Pre-download assets for selected languages
+swift run fluidaudiocli magpie download --languages en,es
+
+# Synthesize with IPA override enabled (default)
+swift run fluidaudiocli magpie text --text "Hello | ˈ n ɛ m o ʊ |." \
+    --speaker 0 --language en --output hello.wav
+
+# Classifier-free guidance and sampling controls
+swift run fluidaudiocli magpie text --text "Bonjour." --language fr \
+    --cfg 1.3 --temperature 0.6 --topk 80 --seed 42 --output bonjour.wav
+
+# Fixture-driven parity harness (tokenizer / full pipeline)
+swift run fluidaudiocli magpie tokenizer-parity --fixture fixture_en.json
+swift run fluidaudiocli magpie parity --fixture fixture_en.npz
+```
+
+Assets (4 CoreML models + `constants/` + per-language tokenizer files) are fetched from [`FluidInference/magpie-tts-multilingual-357m-coreml`](https://huggingface.co/FluidInference/magpie-tts-multilingual-357m-coreml) on first use. The 1-layer local transformer (256d, top-k + temperature sampling, forbidden-token mask) runs on CPU via Accelerate/BNNS; the 12-layer decoder KV cache is rolled stateful across steps.
 
 ## Continuous Integration
 

@@ -42,6 +42,8 @@ struct FluidAudioCLI {
             await MultiStreamCommand.run(arguments: Array(arguments.dropFirst(2)))
         case "tts":
             await TTS.run(arguments: Array(arguments.dropFirst(2)))
+        case "magpie":
+            await MagpieCommand.run(arguments: Array(arguments.dropFirst(2)))
         case "diarization-benchmark":
             await StreamDiarizationBenchmark.run(arguments: Array(arguments.dropFirst(2)))
         case "process":
@@ -106,6 +108,7 @@ struct FluidAudioCLI {
                 transcribe              Transcribe audio file using streaming ASR
                 multi-stream            Transcribe multiple audio files in parallel
                 tts                     Synthesize speech from text using Kokoro TTS
+                magpie                  Magpie TTS Multilingual 357M (download/text/parity)
                 parakeet-eou            Run Parakeet EOU Streaming ASR on a single file
                 ctc-earnings-benchmark  Run CTC keyword spotting benchmark on Earnings22
                 sortformer              Run Sortformer streaming diarization
