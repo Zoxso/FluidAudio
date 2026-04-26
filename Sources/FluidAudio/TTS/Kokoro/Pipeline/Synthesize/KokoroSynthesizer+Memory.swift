@@ -78,6 +78,25 @@ extension KokoroSynthesizer {
             storage[key] = pool
         }
 
+        /// Drop every cached `MLMultiArray` so the underlying buffers can be
+        /// reclaimed by the system. The pool is empty after this call —
+        /// subsequent `rent` calls will allocate fresh arrays as needed.
+        ///
+        /// Use this to release the high-water-mark memory the pool retains
+        /// after a render finishes (per-chunk source noise, attention masks,
+        /// reference style buffers, etc.). Long-running synthesis processes
+        /// can otherwise hold hundreds of MB indefinitely even when idle.
+        func drain() {
+            storage.removeAll(keepingCapacity: false)
+        }
+
+        /// Number of arrays currently retained, summed across every shape
+        /// bucket. Useful for diagnostics — log before/after `drain()` to
+        /// confirm the pool actually shrank.
+        var cachedCount: Int {
+            storage.values.reduce(0) { $0 + $1.count }
+        }
+
         private func zero(_ array: MLMultiArray) {
             let elementCount = array.count
             guard elementCount > 0 else { return }

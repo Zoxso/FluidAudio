@@ -944,6 +944,24 @@ public struct KokoroSynthesizer {
         return compressed
     }
 
+    /// Drain the static `MultiArrayPool` so the high-water-mark buffers it
+    /// retains between synthesis calls (per-chunk source noise, attention
+    /// masks, reference style, etc.) are released back to the system. Cheap
+    /// to call repeatedly; the pool refills on demand on the next synthesize.
+    ///
+    /// Use this between renders, on memory-pressure warnings, or alongside
+    /// `KokoroTtsManager.cleanup()` to fully release transient state.
+    public static func purgePoolBuffers() async {
+        await multiArrayPool.drain()
+    }
+
+    /// Diagnostic — number of `MLMultiArray` instances currently retained by
+    /// the pool. Multiplying by per-instance shape gives an order-of-magnitude
+    /// estimate of pool memory.
+    public static func pooledArrayCount() async -> Int {
+        await multiArrayPool.cachedCount
+    }
+
     /// Convert raw `pred_dur` values into per-phoneme `TokenTiming`s.
     ///
     /// `predDur` and `phonemes` must have the same length (the synthesizer slices

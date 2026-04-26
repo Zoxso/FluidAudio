@@ -227,6 +227,19 @@ public final class KokoroTtsManager {
         ensuredVoices.removeAll(keepingCapacity: false)
     }
 
+    /// Drain the synthesizer's static `MultiArrayPool` so the per-chunk
+    /// preallocated buffers it retains (input_ids, attention_mask, phases,
+    /// source_noise) are released. Independent of `cleanup()` — leaves the
+    /// loaded Core ML models in place so the next synthesize call doesn't
+    /// pay another cold-start cost.
+    ///
+    /// Useful between long renders, on memory-pressure warnings, or any
+    /// time the manager is idle for more than a few seconds. The pool
+    /// refills on demand on the next synthesize.
+    public func purgeCachedBuffers() async {
+        await KokoroSynthesizer.purgePoolBuffers()
+    }
+
     private func voiceName(for speakerId: Int) -> String {
         if speakerId == defaultSpeakerId {
             return defaultVoice
