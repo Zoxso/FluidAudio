@@ -250,13 +250,15 @@ public struct KokoroSynthesizer {
     }
 
     /// Synthesize a single chunk of text using precomputed token IDs.
+    /// Returns the audio samples, model prediction time, and (when the model exposes it) the
+    /// per-input-token duration prediction sliced to the true input length (padding excluded).
     private static func synthesizeChunk(
         _ chunk: TextChunk,
         inputIds: [Int32],
         variant: ModelNames.TTS.Variant,
         targetTokens: Int,
         referenceVector: [Float]
-    ) async throws -> ([Float], TimeInterval) {
+    ) async throws -> (samples: [Float], predictionTime: TimeInterval, predDur: [Float]?) {
         guard !inputIds.isEmpty else {
             throw TTSError.processingFailed("No input IDs generated for chunk: \(chunk.words.joined(separator: " "))")
         }
@@ -413,6 +415,7 @@ public struct KokoroSynthesizer {
 
         // Compute audio length from pred_dur (model's audio_length_samples output is broken)
         var effectiveCount = audioArrayUnwrapped.count
+        var perTokenDurations: [Float]? = nil
 
         if let predDurArray = output.featureValue(for: "pred_dur")?.multiArrayValue {
             // Sum pred_dur to get total frames
@@ -426,6 +429,18 @@ public struct KokoroSynthesizer {
             let predictedSamples = Int(round(totalFrames * 600.0))
             if predictedSamples > 0 {
                 effectiveCount = min(predictedSamples, audioArrayUnwrapped.count)
+            }
+
+            // Capture the per-token slice for downstream timing assembly. The model returns
+            // `pred_dur` padded to `targetTokens`; slice to the true input length so callers
+            // see one entry per real input token (matching `chunk.phonemes`).
+            let trueLen = min(inputIds.count, targetTokens, predDurArray.count)
+            if trueLen > 0 {
+                var slice = [Float](repeating: 0, count: trueLen)
+                for i in 0..<trueLen {
+                    slice[i] = predDurPtr[i]
+                }
+                perTokenDurations = slice
             }
         }
 
@@ -468,7 +483,7 @@ public struct KokoroSynthesizer {
         }
 
         await recycleModelArrays()
-        return (samples, predictionTime)
+        return (samples, predictionTime, perTokenDurations)
     }
 
     /// Main synthesis function returning audio bytes only.
@@ -556,6 +571,7 @@ public struct KokoroSynthesizer {
             let index: Int
             let samples: [Float]
             let predictionTime: TimeInterval
+            let predDur: [Float]?
         }
 
         let embeddingDimension = try await modelCache.referenceEmbeddingDimension()
@@ -592,6 +608,7 @@ public struct KokoroSynthesizer {
         )
         let chunkTemplates = entries.map { $0.template }
         var chunkSampleBuffers = Array(repeating: [Float](), count: totalChunks)
+        var chunkPredDurations: [[Float]?] = Array(repeating: nil, count: totalChunks)
         var allSamples: [Float] = []
         let crossfadeMs = 8
         let samplesPerMillisecond = Double(TtsConstants.audioSampleRate) / 1_000.0
@@ -617,7 +634,7 @@ public struct KokoroSynthesizer {
                     Self.logger.info("Chunk \(chunkIndex + 1) text: '\(template.text)'")
                     Self.logger.info(
                         "Chunk \(chunkIndex + 1) using Kokoro \(variantDescription(template.variant)) model")
-                    let (chunkSamples, predictionTime) = try await synthesizeChunk(
+                    let chunkOutput = try await synthesizeChunk(
                         chunk,
                         inputIds: inputIds,
                         variant: template.variant,
@@ -625,8 +642,9 @@ public struct KokoroSynthesizer {
                         referenceVector: referenceVector)
                     return ChunkSynthesisResult(
                         index: chunkIndex,
-                        samples: chunkSamples,
-                        predictionTime: predictionTime)
+                        samples: chunkOutput.samples,
+                        predictionTime: chunkOutput.predictionTime,
+                        predDur: chunkOutput.predDur)
                 }
             }
 
@@ -645,6 +663,7 @@ public struct KokoroSynthesizer {
             let index = output.index
             let chunkSamples = output.samples
             chunkSampleBuffers[index] = chunkSamples
+            chunkPredDurations[index] = output.predDur
             totalPredictionTime += output.predictionTime
 
             Self.logger.info(
@@ -781,8 +800,21 @@ public struct KokoroSynthesizer {
             sampleRate: Double(TtsConstants.audioSampleRate)
         )
 
-        let chunkInfos = zip(chunkTemplates, chunkSampleBuffers).map { template, samples in
-            ChunkInfo(
+        let chunkInfos = entries.enumerated().map { (i, entry) -> ChunkInfo in
+            let template = entry.template
+            let samples = chunkSampleBuffers[i]
+            let predDur = chunkPredDurations[i]
+            let tokenTimings: [TokenTiming]? = predDur.flatMap {
+                buildTokenTimings(predDur: $0, phonemes: entry.chunk.phonemes)
+            }
+            let wordTimings: [WordTiming]? = tokenTimings.flatMap { tt in
+                buildWordTimings(
+                    tokenTimings: tt,
+                    atoms: entry.chunk.atoms,
+                    phonemeRanges: entry.chunk.phonemeRanges
+                )
+            }
+            return ChunkInfo(
                 index: template.index,
                 text: template.text,
                 wordCount: template.wordCount,
@@ -791,7 +823,9 @@ public struct KokoroSynthesizer {
                 pauseAfterMs: template.pauseAfterMs,
                 tokenCount: template.tokenCount,
                 samples: samples,
-                variant: template.variant
+                variant: template.variant,
+                tokenTimings: tokenTimings,
+                wordTimings: wordTimings
             )
         }
 
@@ -827,8 +861,29 @@ public struct KokoroSynthesizer {
             return baseResult
         }
 
+        let timingScale = 1.0 / TimeInterval(factor)
         let adjustedChunks = baseResult.chunks.map { chunk -> ChunkInfo in
             let stretched = adjustSamples(chunk.samples, factor: factor)
+            let scaledTokenTimings = chunk.tokenTimings.map { timings in
+                timings.map { t in
+                    TokenTiming(
+                        phoneme: t.phoneme,
+                        startTime: t.startTime * timingScale,
+                        endTime: t.endTime * timingScale,
+                        frames: t.frames
+                    )
+                }
+            }
+            let scaledWordTimings = chunk.wordTimings.map { timings in
+                timings.map { w in
+                    WordTiming(
+                        word: w.word,
+                        atomIndex: w.atomIndex,
+                        startTime: w.startTime * timingScale,
+                        endTime: w.endTime * timingScale
+                    )
+                }
+            }
             return ChunkInfo(
                 index: chunk.index,
                 text: chunk.text,
@@ -838,7 +893,9 @@ public struct KokoroSynthesizer {
                 pauseAfterMs: chunk.pauseAfterMs,
                 tokenCount: chunk.tokenCount,
                 samples: stretched,
-                variant: chunk.variant
+                variant: chunk.variant,
+                tokenTimings: scaledTokenTimings,
+                wordTimings: scaledWordTimings
             )
         }
 
@@ -885,6 +942,72 @@ public struct KokoroSynthesizer {
             index += step
         }
         return compressed
+    }
+
+    /// Convert raw `pred_dur` values into per-phoneme `TokenTiming`s.
+    ///
+    /// `predDur` and `phonemes` must have the same length (the synthesizer slices
+    /// `pred_dur` to the true input length before passing it in). Returns nil if
+    /// the alignment is mismatched or either array is empty.
+    static func buildTokenTimings(
+        predDur: [Float],
+        phonemes: [String]
+    ) -> [TokenTiming]? {
+        guard predDur.count == phonemes.count, !predDur.isEmpty else { return nil }
+
+        let frameSeconds =
+            TimeInterval(TtsConstants.kokoroFrameSamples) / TimeInterval(TtsConstants.audioSampleRate)
+        var timings: [TokenTiming] = []
+        timings.reserveCapacity(predDur.count)
+        var cumulativeFrames: Float = 0.0
+
+        for i in 0..<predDur.count {
+            let startTime = TimeInterval(cumulativeFrames) * frameSeconds
+            cumulativeFrames += predDur[i]
+            let endTime = TimeInterval(cumulativeFrames) * frameSeconds
+            timings.append(
+                TokenTiming(
+                    phoneme: phonemes[i],
+                    startTime: startTime,
+                    endTime: endTime,
+                    frames: predDur[i]
+                )
+            )
+        }
+        return timings
+    }
+
+    /// Aggregate `TokenTiming`s into per-atom `WordTiming`s using the chunker's phoneme→atom alignment.
+    ///
+    /// `phonemeRanges[i]` describes which slice of `tokenTimings` corresponds to `atoms[i]`.
+    /// Atoms whose ranges fall outside the available timings (e.g. truncation cases) are skipped.
+    static func buildWordTimings(
+        tokenTimings: [TokenTiming],
+        atoms: [String],
+        phonemeRanges: [Range<Int>]
+    ) -> [WordTiming]? {
+        guard atoms.count == phonemeRanges.count, !atoms.isEmpty else { return nil }
+
+        var timings: [WordTiming] = []
+        timings.reserveCapacity(atoms.count)
+
+        for (atomIndex, range) in phonemeRanges.enumerated() {
+            guard range.lowerBound < tokenTimings.count else { continue }
+            let endIndex = min(range.upperBound, tokenTimings.count)
+            guard range.lowerBound < endIndex else { continue }
+
+            let startTime = tokenTimings[range.lowerBound].startTime
+            let endTime = tokenTimings[endIndex - 1].endTime
+            timings.append(
+                WordTiming(
+                    word: atoms[atomIndex],
+                    atomIndex: atomIndex,
+                    startTime: startTime,
+                    endTime: endTime
+                )
+            )
+        }
+        return timings.isEmpty ? nil : timings
     }
 
     static func removeDelimiterCharacters(from text: String) -> String {

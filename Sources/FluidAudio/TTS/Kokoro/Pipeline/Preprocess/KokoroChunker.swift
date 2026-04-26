@@ -9,6 +9,11 @@ struct TextChunk: Sendable {
     let words: [String]
     let atoms: [String]
     let phonemes: [String]
+    /// For each entry in `atoms`, the range of indices in `phonemes` that produced it.
+    /// Always satisfies `phonemeRanges.count == atoms.count`. Inter-atom separator phonemes
+    /// (single-space tokens between words) are not covered by any range and therefore are
+    /// not attributed to any atom.
+    let phonemeRanges: [Range<Int>]
     let totalFrames: Float
     let pauseAfterMs: Int
     let text: String
@@ -296,6 +301,7 @@ enum KokoroChunker {
         var chunkWords: [String] = []
         var chunkAtoms: [String] = []
         var chunkPhonemes: [String] = []
+        var chunkPhonemeRanges: [Range<Int>] = []
         var chunkTokenCount = 0
         var needsWordSeparator = false
         var missing: Set<String> = []
@@ -315,6 +321,7 @@ enum KokoroChunker {
                     words: chunkWords,
                     atoms: chunkAtoms,
                     phonemes: chunkPhonemes,
+                    phonemeRanges: chunkPhonemeRanges,
                     totalFrames: 0,
                     pauseAfterMs: 0,
                     text: textValue
@@ -323,6 +330,7 @@ enum KokoroChunker {
             chunkWords.removeAll(keepingCapacity: true)
             chunkAtoms.removeAll(keepingCapacity: true)
             chunkPhonemes.removeAll(keepingCapacity: true)
+            chunkPhonemeRanges.removeAll(keepingCapacity: true)
             chunkTokenCount = 0
             needsWordSeparator = false
         }
@@ -426,10 +434,12 @@ enum KokoroChunker {
                     chunkTokenCount += 1
                 }
 
+                let wordPhonemeStart = chunkPhonemes.count
                 chunkPhonemes.append(contentsOf: resolvedPhonemes)
                 chunkTokenCount += resolvedPhonemes.count
                 chunkWords.append(original)
                 chunkAtoms.append(original)
+                chunkPhonemeRanges.append(wordPhonemeStart..<chunkPhonemes.count)
                 needsWordSeparator = true
                 wordIndex += 1
 
@@ -438,9 +448,11 @@ enum KokoroChunker {
                 if chunkTokenCount + 1 > capacity && !chunkPhonemes.isEmpty {
                     flushChunk()
                 }
+                let punctPhonemeStart = chunkPhonemes.count
                 chunkPhonemes.append(symbol)
                 chunkTokenCount += 1
                 chunkAtoms.append(symbol)
+                chunkPhonemeRanges.append(punctPhonemeStart..<chunkPhonemes.count)
                 needsWordSeparator = false
             }
         }
