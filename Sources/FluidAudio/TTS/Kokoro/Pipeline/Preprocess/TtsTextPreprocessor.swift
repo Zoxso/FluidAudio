@@ -136,19 +136,27 @@ enum TtsTextPreprocessor {
 
     // MARK: - Number Processing
 
-    /// Remove commas from numbers (1,000 → 1000)
+    /// Remove thousands separators from numbers (1,000 → 1000, 1,000,000 → 1000000).
+    ///
+    /// Only a comma flanked by a digit on BOTH sides is stripped. Clause commas
+    /// ("He paused, then spoke.") are left intact: Kokoro relies on the comma
+    /// surviving into the phoneme/token stream to produce a clause pause, so an
+    /// over-broad strip here flattens prosody (the voice reads straight through
+    /// commas). The previous implementation reassembled number matches but then
+    /// ran `.replacingOccurrences(of: ",", with: "")` on the whole string, which
+    /// removed every comma in the text — not just separators.
     private static func removeCommasFromNumbers(_ text: String) -> String {
-        let commaInNumberPattern = try! NSRegularExpression(
-            pattern: "(^|[^\\d])(\\d+(?:,\\d+)*)([^\\d]|$)",
+        let separatorPattern = try! NSRegularExpression(
+            pattern: "(?<=\\d),(?=\\d)",
             options: []
         )
 
-        return commaInNumberPattern.stringByReplacingMatches(
+        return separatorPattern.stringByReplacingMatches(
             in: text,
             options: [],
-            range: NSRange(location: 0, length: text.count),
-            withTemplate: "$1$2$3"
-        ).replacingOccurrences(of: ",", with: "")
+            range: NSRange(text.startIndex..<text.endIndex, in: text),
+            withTemplate: ""
+        )
     }
 
     /// Handle ranges (5-10 → 5 to 10)
